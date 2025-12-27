@@ -1,0 +1,65 @@
+name: Build debug APK
+
+on:
+  # Manual dispatch (Run workflow button) with an optional branch input
+  workflow_dispatch:
+    inputs:
+      app-name:
+        description: 'App name to use for the uploaded artifact'
+        required: false
+        default: 'App'
+      branch:
+        description: 'Branch or ref to build (e.g., main or feature/my-branch). If empty, the run ref will be used.'
+        required: false
+        default: ''
+
+  # Keep supporting reusable workflow calls
+  workflow_call:
+    inputs:
+      app-name:
+        required: false
+        type: string
+        default: 'App'
+      branch:
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  build:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+
+    # Resolve app name and target ref for both workflow_dispatch and workflow_call
+    env:
+      APP_NAME: ${{ inputs['app-name'] || github.event.inputs['app-name'] || 'App' }}
+      TARGET_REF: ${{ inputs.branch || github.event.inputs.branch || github.ref }}
+
+    steps:
+      - name: Check the code
+        uses: actions/checkout@v4
+        with:
+          # Checkout the selected branch/ref (falls back to the run's ref)
+          ref: ${{ env.TARGET_REF }}
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug
+
+      - name: Save current date as env variable
+        run: echo "current_date=$(date +'%I%M_%Y%m%d')" >> $GITHUB_ENV
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: '${{ env.APP_NAME }}-debug-${{ env.current_date }}'
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
