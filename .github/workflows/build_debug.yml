@@ -61,6 +61,9 @@ jobs:
         env:
           ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
 
+      - name: Accept Android SDK Licenses
+        run: yes | sdkmanager --licenses
+  
 # Then continue with your normal build steps
       #- name: Install CMake 3.31.0
       #  run: |
