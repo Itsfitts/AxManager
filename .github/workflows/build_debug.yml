@@ -50,14 +50,26 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Install CMake 3.31.0
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake
+        run: sdkmanager "cmake;3.31.0"
+
+      - name: Set ANDROID_SDK_ROOT
+        run: echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+        env:
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
+
+# Then continue with your normal build steps
+      #- name: Install CMake 3.31.0
+      #  run: |
+      #    sudo apt-get update
+      #    sudo apt-get install -y cmake
         # Or use a direct download if packaging is not available for 3.31.0
 
-      - name: Set up ANDROID_SDK_ROOT (if not already set)
-        run: echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
+   #   - name: Set up ANDROID_SDK_ROOT (if not already set)
+   #     run: echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
 
       - name: Build debug APK
         run: ./gradlew assembleDebug
