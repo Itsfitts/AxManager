@@ -1,4 +1,4 @@
-name: Build debug APK
+name: Build Release APK
 
 on:
   workflow_dispatch:
@@ -57,7 +57,7 @@ jobs:
         
             - name: Accept Android SDK Licenses
               run: yes | sdkmanager --licenses
-            
+
             - name: Install CMake
               run: |
           # It is safer to install the version required by your project 
