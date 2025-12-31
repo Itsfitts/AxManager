@@ -28,10 +28,8 @@ jobs:
         runs-on: ubuntu-latest
 
         env:
-  APP_NAME: ${{ inputs['app-name'] || github.event.inputs['app-name'] || 'AxManager' }}
-  TARGET_REF: ${{ inputs.branch || github.event.inputs.branch || github.ref }}
-
-
+           APP_NAME: ${{ inputs['app-name'] || github.event.inputs['app-name'] || 'App' }}
+           TARGET_REF: ${{ inputs.branch || github.event.inputs.branch || github.ref }}
 
         steps:
             - name: Check the code
