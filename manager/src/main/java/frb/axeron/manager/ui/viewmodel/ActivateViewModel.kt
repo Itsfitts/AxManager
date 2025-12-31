@@ -16,6 +16,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.topjohnwu.superuser.Shell
 import frb.axeron.adb.AdbClient
 import frb.axeron.adb.AdbKey
 import frb.axeron.adb.AdbMdns
@@ -27,14 +28,23 @@ import frb.axeron.api.core.AxeronSettings
 import frb.axeron.api.core.Engine
 import frb.axeron.server.utils.Starter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import rikka.shizuku.Shizuku
 
-const val TAG = "AdbViewModel"
+class ActivateViewModel : ViewModel() {
 
-class AdbViewModel : ViewModel() {
+    companion object {
+        const val TAG = "AdbViewModel"
+    }
 
     var axeronInfo by mutableStateOf(AxeronInfo())
+        private set
+
+    var isShizukuActive by mutableStateOf(false)
         private set
 
     var isNotificationEnabled by mutableStateOf(false)
@@ -52,34 +62,96 @@ class AdbViewModel : ViewModel() {
     var tryActivate by mutableStateOf(false)
         private set
 
-    var isUpdating by mutableStateOf(false)
-        private set
+    fun axeronObserve(): Flow<AxeronInfo> = callbackFlow {
+        if (Axeron.pingBinder()) {
+            trySend(Axeron.getAxeronInfo())
+        }
+        val receivedListener = Axeron.OnBinderReceivedListener {
+            Log.i("AxManagerBinder", "onBinderReceived")
+            trySend(Axeron.getAxeronInfo())
+        }
+        val deadListener = Axeron.OnBinderDeadListener {
+            Log.i("AxManagerBinder", "onBinderDead")
+            trySend(AxeronInfo())
+        }
+        Axeron.addBinderReceivedListener(receivedListener)
+        Axeron.addBinderDeadListener(deadListener)
+        awaitClose {
+            Axeron.removeBinderReceivedListener(receivedListener)
+            Axeron.removeBinderDeadListener(deadListener)
+        }
+    }
 
-    fun setUpdatingState(update: Boolean) {
-        viewModelScope.launch {
-            isUpdating = update
+    fun shizukuObserve(): Flow<Boolean> = callbackFlow {
+        if (Shizuku.pingBinder()) {
+            trySend(true)
+        }
+        val shizukuReceived = Shizuku.OnBinderReceivedListener {
+            Log.i("AxManagerBinder", "onShizukuBinderReceived")
+            trySend(true)
+        }
+
+        val shizukuDead = Shizuku.OnBinderDeadListener {
+            Log.i("AxManagerBinder", "onShizukuBinderDead")
+            trySend(false)
+        }
+        Shizuku.addBinderReceivedListener(shizukuReceived)
+        Shizuku.addBinderDeadListener(shizukuDead)
+
+        awaitClose {
+            Shizuku.removeBinderReceivedListener(shizukuReceived)
+            Shizuku.removeBinderDeadListener(shizukuDead)
         }
     }
 
     init {
-        checkAxeronService()
-    }
-
-    fun checkAxeronService() {
         viewModelScope.launch {
-            if (Axeron.pingBinder()) {
+            axeronObserve().collect {
+                axeronInfo = it
+                if (axeronInfo.isNeedUpdate()) {
+                    tryActivate = true
+                    Axeron.newProcess(
+                        QuickShellViewModel.getQuickCmd(Starter.internalCommand),
+                        null,
+                        null
+                    )
+                    return@collect
+                }
                 tryActivate = false
-                axeronInfo = Axeron.getAxeronInfo()
-            } else {
-                if (isUpdating) return@launch
-                axeronInfo = AxeronInfo()
+            }
+        }
+
+        viewModelScope.launch {
+            shizukuObserve().collect {
+                isShizukuActive = it
             }
         }
     }
 
-    /**
-     * Update state apakah notifikasi aktif atau tidak
-     */
+    fun startRoot(): Boolean = runBlocking(Dispatchers.IO) {
+        if (tryActivate) return@runBlocking true
+        tryActivate = true
+
+        var result = false
+
+        if (!Shell.getShell().isRoot) {
+            Shell.getCachedShell()?.close()
+            tryActivate = false
+            return@runBlocking result
+        }
+
+
+        Shell.cmd(Starter.internalCommand).submit {
+            if (it.isSuccess) {
+                AxeronSettings.setLastLaunchMode(AxeronSettings.LaunchMethod.ROOT)
+                result = true
+            }
+        }
+
+        tryActivate = false
+        return@runBlocking result
+    }
+
     @RequiresApi(Build.VERSION_CODES.R)
     fun updateNotificationState(context: Context) {
         viewModelScope.launch {
@@ -165,35 +237,33 @@ class AdbViewModel : ViewModel() {
         }
 
     @RequiresApi(Build.VERSION_CODES.R)
-    fun startPairingService(context: Context) {
-        viewModelScope.launch {
-            if (!isNotificationEnabled) return@launch
-            val intent = AdbPairingService.startIntent(context)
-            try {
-                context.startForegroundService(intent)
-            } catch (e: Throwable) {
-                Log.e("AxManager", "startForegroundService", e)
+    fun startPairingService(context: Context) = runBlocking(Dispatchers.IO) {
+        if (!isNotificationEnabled) return@runBlocking
+        val intent = AdbPairingService.startIntent(context)
+        try {
+            context.startForegroundService(intent)
+        } catch (e: Throwable) {
+            Log.e("AxManager", "startForegroundService", e)
 
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-                    && e is ForegroundServiceStartNotAllowedException
-                ) {
-                    val mode = context.getSystemService(AppOpsManager::class.java)
-                        .noteOpNoThrow(
-                            "android:start_foreground",
-                            android.os.Process.myUid(),
-                            context.packageName,
-                            null,
-                            null
-                        )
-                    if (mode == AppOpsManager.MODE_ERRORED) {
-                        Toast.makeText(
-                            context,
-                            "OP_START_FOREGROUND is denied. What are you doing?",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
-                    context.startService(intent)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+                && e is ForegroundServiceStartNotAllowedException
+            ) {
+                val mode = context.getSystemService(AppOpsManager::class.java)
+                    .noteOpNoThrow(
+                        "android:start_foreground",
+                        android.os.Process.myUid(),
+                        context.packageName,
+                        null,
+                        null
+                    )
+                if (mode == AppOpsManager.MODE_ERRORED) {
+                    Toast.makeText(
+                        context,
+                        "OP_START_FOREGROUND is denied. What are you doing?",
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
+                context.startService(intent)
             }
         }
     }

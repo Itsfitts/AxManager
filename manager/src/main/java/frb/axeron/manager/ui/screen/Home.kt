@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -93,7 +92,7 @@ import frb.axeron.manager.ui.screen.home.PluginCard
 import frb.axeron.manager.ui.screen.home.PrivilegeCard
 import frb.axeron.manager.ui.util.checkNewVersion
 import frb.axeron.manager.ui.util.module.LatestVersionInfo
-import frb.axeron.manager.ui.viewmodel.AdbViewModel
+import frb.axeron.manager.ui.viewmodel.ActivateViewModel
 import frb.axeron.manager.ui.viewmodel.QuickShellViewModel
 import frb.axeron.manager.ui.viewmodel.ViewModelGlobal
 import frb.axeron.server.utils.Starter
@@ -109,22 +108,9 @@ fun HomeScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewModelGloba
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior(rememberTopAppBarState())
     val pluginViewModel = viewModelGlobal.pluginViewModel
     val privilegeViewModel = viewModelGlobal.privilegeViewModel
-    val adbViewModel = viewModelGlobal.adbViewModel
+    val activateViewModel = viewModelGlobal.activateViewModel
 
-    val axeronInfo = adbViewModel.axeronInfo
-
-    LaunchedEffect(axeronInfo) {
-        if (axeronInfo.isNeedUpdate()) {
-            Log.d(
-                "AxManager",
-                "NeedUpdate ${Axeron.getAxeronInfo().getActualVersion()} > $VERSION_CODE"
-            )
-            adbViewModel.setUpdatingState(true)
-            Axeron.newProcess(QuickShellViewModel.getQuickCmd(Starter.internalCommand), null, null)
-        } else {
-            adbViewModel.setUpdatingState(false)
-        }
-    }
+    val axeronInfo = activateViewModel.axeronInfo
 
     Scaffold(
         topBar = {
@@ -221,7 +207,7 @@ fun HomeScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewModelGloba
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             StatusCard(
-                adbViewModel = adbViewModel
+                activateViewModel = activateViewModel
             ) {
                 if (!it) {
                     navigator.navigate(ActivateScreenDestination)
@@ -243,7 +229,7 @@ fun HomeScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewModelGloba
             }
 
             UpdateCard()
-            InfoCard(adbViewModel)
+            InfoCard(activateViewModel)
 
             SupportCard()
             LearnCard()
@@ -332,10 +318,10 @@ fun LearnCard() {
 
 @Composable
 fun StatusCard(
-    adbViewModel: AdbViewModel,
+    activateViewModel: ActivateViewModel,
     onClick: (Boolean) -> Unit = {}
 ) {
-    val axeronInfo = adbViewModel.axeronInfo
+    val axeronInfo = activateViewModel.axeronInfo
     val context = LocalContext.current
     Log.d("AxManager", "NeedUpdate: ${axeronInfo.isNeedUpdate()}")
 
@@ -347,7 +333,7 @@ fun StatusCard(
         colors = CardDefaults.elevatedCardColors(
             containerColor = run {
                 when {
-                    adbViewModel.isUpdating -> MaterialTheme.colorScheme.primaryContainer
+                    axeronInfo.isNeedUpdate() -> MaterialTheme.colorScheme.primaryContainer
                     axeronInfo.isNeedExtraStep() -> MaterialTheme.colorScheme.errorContainer
                     axeronInfo.isRunning() -> MaterialTheme.colorScheme.primaryContainer
                     else -> MaterialTheme.colorScheme.errorContainer
@@ -362,11 +348,11 @@ fun StatusCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable {
-                    if (adbViewModel.isUpdating) {
+                    if (axeronInfo.isNeedUpdate()) {
                         Toast.makeText(context, "Updating...", Toast.LENGTH_SHORT).show()
                         return@clickable
                     }
-                    if (axeronInfo.isNeedUpdate()) {
+                    if (axeronInfo.isNeedExtraStep()) {
                         uriHandler.openUri(extraStepUrl)
                         return@clickable
                     }
@@ -381,7 +367,7 @@ fun StatusCard(
             }
 
             when {
-                adbViewModel.isUpdating -> {
+                axeronInfo.isNeedUpdate() -> {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -510,7 +496,7 @@ fun StatusCard(
                                 fontWeight = FontWeight.SemiBold
                             )
                             ExtraLabel(
-                                text = axeronInfo.serverInfo.getMode(),
+                                text = axeronInfo.serverInfo.getMode().label,
                                 style = ExtraLabelDefaults.style.copy(
                                     allCaps = false
                                 )
@@ -673,8 +659,8 @@ fun WarningCard(
 }
 
 @Composable
-fun InfoCard(adbViewModel: AdbViewModel) {
-    val axeronInfo = adbViewModel.axeronInfo
+fun InfoCard(activateViewModel: ActivateViewModel) {
+    val axeronInfo = activateViewModel.axeronInfo
 
     ElevatedCard(
         elevation = CardDefaults.cardElevation(
@@ -730,11 +716,6 @@ fun InfoCard(adbViewModel: AdbViewModel) {
                             fontWeight = FontWeight.Bold
                         )
                     }
-//                    HorizontalDivider(
-//                        Modifier.padding(top = 12.dp),
-//                        DividerDefaults.Thickness,
-//                        MaterialTheme.colorScheme.surfaceContainerHighest
-//                    )
                 }
             }
 

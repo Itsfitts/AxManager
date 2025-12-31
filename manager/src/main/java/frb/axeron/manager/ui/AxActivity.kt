@@ -1,7 +1,6 @@
 package frb.axeron.manager.ui
 
 import android.os.Bundle
-import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -37,7 +36,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -58,18 +57,16 @@ import com.ramcosta.composedestinations.generated.destinations.FlashScreenDestin
 import com.ramcosta.composedestinations.navigation.dependency
 import com.ramcosta.composedestinations.utils.isRouteOnBackStackAsState
 import com.ramcosta.composedestinations.utils.rememberDestinationsNavigator
-import frb.axeron.api.Axeron
 import frb.axeron.api.AxeronInfo
 import frb.axeron.manager.ui.navigation.BottomBarDestination
 import frb.axeron.manager.ui.theme.AxManagerTheme
 import frb.axeron.manager.ui.util.LocalSnackbarHost
-import frb.axeron.manager.ui.viewmodel.AdbViewModel
+import frb.axeron.manager.ui.viewmodel.ActivateViewModel
 import frb.axeron.manager.ui.viewmodel.AppsViewModel
 import frb.axeron.manager.ui.viewmodel.PluginViewModel
 import frb.axeron.manager.ui.viewmodel.PrivilegeViewModel
 import frb.axeron.manager.ui.viewmodel.SettingsViewModel
 import frb.axeron.manager.ui.viewmodel.ViewModelGlobal
-import rikka.shizuku.Shizuku
 
 
 class AxActivity : ComponentActivity() {
@@ -92,68 +89,30 @@ fun MainScreen(settingsViewModel: SettingsViewModel) {
     val navController = rememberNavController()
     val currentDestination = navController.currentBackStackEntryAsState().value?.destination
 
+    val activateViewModel: ActivateViewModel = viewModel<ActivateViewModel>()
+
     val appsViewModel: AppsViewModel = viewModel<AppsViewModel>()
     val privilegeViewModel: PrivilegeViewModel = viewModel<PrivilegeViewModel>()
-    val adbViewModel: AdbViewModel = viewModel<AdbViewModel>()
     val pluginViewModel: PluginViewModel = viewModel<PluginViewModel>()
 
-    DisposableEffect(Unit) {
+    val axeronInfo = activateViewModel.axeronInfo
 
-        adbViewModel.checkAxeronService()
-
-        if (Axeron.pingBinder() && Axeron.isUpdated()) {
+    LaunchedEffect(axeronInfo) {
+        if (axeronInfo.isRunning()) {
             pluginViewModel.fetchModuleList()
             appsViewModel.loadInstalledApps()
-            if (Shizuku.pingBinder()) {
-                privilegeViewModel.setPrivilegeEnable(true)
-                privilegeViewModel.loadInstalledApps()
-            }
         }
+    }
 
-        val shizukuReceived = Shizuku.OnBinderReceivedListener {
-            Log.i("AxManagerBinder", "onShizukuBinderReceived")
-            if (Shizuku.pingBinder()) {
-                privilegeViewModel.setPrivilegeEnable(true)
-                privilegeViewModel.loadInstalledApps()
-            }
-        }
-
-        val shizukuDead = Shizuku.OnBinderDeadListener {
-            Log.i("AxManagerBinder", "onShizukuBinderDead")
-            privilegeViewModel.setPrivilegeEnable(false)
-        }
-
-        val receivedListener = Axeron.OnBinderReceivedListener {
-            Log.i("AxManagerBinder", "onBinderReceived")
-            adbViewModel.checkAxeronService()
-            if (Axeron.pingBinder() && Axeron.isUpdated()) {
-                pluginViewModel.fetchModuleList()
-                appsViewModel.loadInstalledApps()
-            }
-        }
-        val deadListener = Axeron.OnBinderDeadListener {
-            Log.i("AxManagerBinder", "onBinderDead")
-            adbViewModel.checkAxeronService()
-        }
-
-        Axeron.addBinderReceivedListener(receivedListener)
-        Axeron.addBinderDeadListener(deadListener)
-        Shizuku.addBinderReceivedListener(shizukuReceived)
-        Shizuku.addBinderDeadListener(shizukuDead)
-
-        onDispose {
-            Axeron.removeBinderReceivedListener(receivedListener)
-            Axeron.removeBinderDeadListener(deadListener)
-            Shizuku.removeBinderReceivedListener(shizukuReceived)
-            Shizuku.removeBinderDeadListener(shizukuDead)
-        }
+    if (activateViewModel.isShizukuActive) {
+        privilegeViewModel.loadInstalledApps()
     }
 
     val viewModelGlobal = remember {
         ViewModelGlobal(
             settingsViewModel = settingsViewModel,
             appsViewModel = appsViewModel,
-            adbViewModel = adbViewModel,
+            activateViewModel = activateViewModel,
             pluginViewModel = pluginViewModel,
             privilegeViewModel = privilegeViewModel
         )
@@ -200,8 +159,8 @@ fun MainScreen(settingsViewModel: SettingsViewModel) {
         ) {
             BottomBar(
                 navController,
-                adbViewModel.axeronInfo,
-                privilegeViewModel.isPrivilegeEnabled,
+                activateViewModel.axeronInfo,
+                activateViewModel.isShizukuActive,
                 pluginViewModel.pluginUpdateCount
             )
         }
@@ -212,7 +171,7 @@ fun MainScreen(settingsViewModel: SettingsViewModel) {
 fun BottomBar(
     navController: NavHostController,
     axeronServerInfo: AxeronInfo,
-    isPermissionManagerEnabled: Boolean,
+    isShizukuActive: Boolean,
     moduleUpdateCount: Int
 ) {
     val navigator = navController.rememberDestinationsNavigator()
@@ -235,7 +194,7 @@ fun BottomBar(
                 BottomBarDestination.entries
                     .forEach { destination ->
                         if (!axeronServerInfo.isRunning() && destination.needAxeron) return@forEach
-                        if (!isPermissionManagerEnabled && destination.needShizuku) return@forEach
+                        if (!isShizukuActive && destination.needShizuku) return@forEach
 
                         val isCurrentDestOnBackStack by navController.isRouteOnBackStackAsState(
                             destination.direction
