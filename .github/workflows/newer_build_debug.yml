@@ -71,9 +71,14 @@ jobs:
       - name: Generate Timestamp
         run: echo "current_date=$(date +'%I%M_%Y%m%d')" >> $GITHUB_ENV
 
+      - name: List APK outputs
+        run: |
+          ls -R
+          find . -name "*.apk" -maxdepth 6 -print
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.APP_NAME }}-debug-${{ env.current_date }}
-          path: app/build/outputs/apk/debug/*.apk
+          path: manager/build/outputs/apk/debug/*.apk
           if-no-files-found: error
