@@ -28,8 +28,9 @@ jobs:
         runs-on: ubuntu-latest
 
         env:
-          APP_NAME: ${{ inputs['app-name'] || github.event.inputs['app-name'] || 'AxManager' }}
-          TARGET_REF: ${{ inputs.branch || github.event.inputs.branch || github.ref }}
+        APP_NAME: ${{ inputs['app-name'] || github.event.inputs['app-name'] || 'AxManager' }}
+        TARGET_REF: ${{ inputs.branch || github.event.inputs.branch || github.ref }}
+
 
         steps:
             - name: Check the code
@@ -44,7 +45,8 @@ jobs:
                 java-version: '21'
 
             - name: Decode the Keystore
-              run: echo ${{ secrets.KEYSTORE_BASE64 }} | base64 -di > $GITHUB_WORKSPACE/keystore.keystore
+              run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -di > "$GITHUB_WORKSPACE/keystore.keystore"
+
 
             - name: Setup Gradle
               uses: gradle/actions/setup-gradle@v4
