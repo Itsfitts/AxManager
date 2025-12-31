@@ -1,0 +1,90 @@
+name: Build Release APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      app-name:
+        description: 'App name for the artifact'
+        required: false
+        default: 'App'
+      branch:
+        description: 'Branch to build'
+        required: false
+        default: ''
+
+  workflow_call:
+    inputs:
+      app-name:
+        required: false
+        type: string
+        default: 'App'
+      branch:
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  build:
+    name: Build release APK
+    runs-on: ubuntu-latest
+
+    env:
+      APP_NAME: ${{ inputs['app-name'] || github.event.inputs['app-name'] || 'App' }}
+      TARGET_REF: ${{ inputs.branch || github.event.inputs.branch || github.ref }}
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_REF }}
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Decode the Keystore
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -di > "$GITHUB_WORKSPACE/keystore.keystore"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        
+      - name: Accept Android SDK Licenses
+        run: yes | sdkmanager --licenses
+
+      - name: Install CMake
+        run: |
+          # It is safer to install the version required by your project 
+          # Or allow the Android Gradle Plugin to download it automatically.
+          sdkmanager "cmake;3.31.0" # 3.22.1 is a highly stable version for AGP
+
+      - name: Build release APK
+        env:
+          # Use the standard runner path for Android Home
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew assembleRelease
+
+      - name: Save current date as env variable
+        run: echo "current_date=$(date +'%I%M_%Y%m%d')" >> $GITHUB_ENV
+
+      - name: List APK outputs
+        run: |
+          ls -R
+          find . -name "*.apk" -maxdepth 6 -print
+            
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-release-${{ env.current_date }}
+          path: manager/build/outputs/apk/release/*.apk
+          if-no-files-found: error
