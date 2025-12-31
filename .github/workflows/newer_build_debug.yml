@@ -55,11 +55,6 @@ jobs:
         
       - name: Accept Android SDK Licenses
         run: yes | sdkmanager --licenses
-
-      - name: Install CMake 3.31
-        run: |
-          "${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager" \
-            "cmake;3.31.0"
             
       - name: Install CMake
         run: |
