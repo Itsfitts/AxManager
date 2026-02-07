@@ -2,6 +2,8 @@ package frb.axeron.manager.ui.screen.plugin
 
 import android.app.Activity.RESULT_OK
 import android.content.Intent
+import android.os.Build
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -47,6 +49,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -56,8 +59,8 @@ import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.generated.destinations.FlashScreenDestination
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import frb.axeron.api.AxeronPluginService
-import frb.axeron.data.PluginInfo
-import frb.axeron.data.PluginInstaller
+import frb.axeron.api.AxeronPluginService.ensureManageExternalStorageAllowed
+import frb.axeron.manager.R
 import frb.axeron.manager.ui.component.AxSnackBarHost
 import frb.axeron.manager.ui.component.SearchAppBar
 import frb.axeron.manager.ui.component.SettingsItem
@@ -68,6 +71,8 @@ import frb.axeron.manager.ui.viewmodel.PluginViewModel
 import frb.axeron.manager.ui.viewmodel.SettingsViewModel
 import frb.axeron.manager.ui.viewmodel.ViewModelGlobal
 import frb.axeron.manager.ui.webui.WebUIActivity
+import frb.axeron.server.PluginInfo
+import frb.axeron.server.PluginInstaller
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -129,12 +134,12 @@ fun PluginScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewModelGlo
             SearchAppBar(
                 title = {
                     Text(
-                        text = "Plugin",
+                        text = stringResource(R.string.plugin),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.SemiBold,
                     )
                 },
-                searchLabel = "Search Plugins",
+                searchLabel = stringResource(R.string.search_label_plugin),
                 searchText = pluginViewModel.search,
                 onSearchTextChange = { pluginViewModel.search = it },
                 onClearClick = { pluginViewModel.search = "" },
@@ -168,10 +173,14 @@ fun PluginScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewModelGlo
                     val installers = mutableListOf<PluginInstaller>()
                     if (clipData != null) {
                         for (i in 0 until clipData.itemCount) {
-                            clipData.getItemAt(i)?.uri?.let { installers.add(PluginInstaller(it)) }
+                            clipData.getItemAt(i)?.uri?.let {
+                                installers.add(PluginInstaller(it))
+                            }
                         }
                     } else {
-                        data.data?.let { installers.add(PluginInstaller(it)) }
+                        data.data?.let {
+                            installers.add(PluginInstaller(it))
+                        }
                     }
 
                     if (installers.isEmpty()) return@rememberLauncherForActivityResult
@@ -217,14 +226,25 @@ fun PluginScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewModelGlo
 
                     Spacer(modifier = Modifier.padding(6.dp))
 
+                    val permissionDenied = stringResource(R.string.permission_denied)
                     FloatingActionButton(
                         onClick = {
-                            // Select the zip files to install
                             val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
                                 setType("application/zip")
                                 putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
                             }
-                            selectZipLauncher.launch(intent)
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                ensureManageExternalStorageAllowed(context) {
+                                    if (it) {
+                                        selectZipLauncher.launch(intent)
+                                    } else {
+                                        Toast.makeText(context, permissionDenied, Toast.LENGTH_LONG)
+                                            .show()
+                                    }
+                                }
+                            } else {
+                                selectZipLauncher.launch(intent)
+                            }
                         }
                     ) {
                         Icon(Icons.Filled.Add, null)
@@ -240,8 +260,15 @@ fun PluginScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewModelGlo
             viewModel = pluginViewModel,
             modifier = Modifier.padding(paddingValues),
             onInstallModule = {
-                navigator.navigate(FlashScreenDestination(FlashIt.FlashPlugins(listOf(
-                    PluginInstaller(it)))))
+                navigator.navigate(
+                    FlashScreenDestination(
+                        FlashIt.FlashPlugins(
+                            listOf(
+                                PluginInstaller(it)
+                            )
+                        )
+                    )
+                )
             },
             onClickModule = { plugin ->
                 if (plugin.hasWebUi) {
@@ -279,11 +306,14 @@ fun ExtraFilterSettings(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                val ascOption = listOf("Ascending", "Descending")
-                val sortOption = listOf("Name", "Size", "Enable", "Action", "WebUI")
+                val ascOption = listOf(R.string.ascending, R.string.descending)
+                val sortOption = listOf(
+                    R.string.name, R.string.size,
+                    R.string.enable, R.string.action, R.string.web_ui
+                )
 
                 SettingsItem(
-                    label = "Filter Settings",
+                    label = stringResource(R.string.filter_settings),
                     iconVector = Icons.Outlined.FilterAlt
                 ) { enabled, checked ->
                     Column(
@@ -292,7 +322,7 @@ fun ExtraFilterSettings(
                             .padding(bottom = 12.dp)
                     ) {
                         SingleChoiceSegmentedButtonRow {
-                            ascOption.forEachIndexed { index, label ->
+                            ascOption.forEachIndexed { index, labelId ->
                                 SegmentedButton(
                                     colors = SegmentedButtonDefaults.colors().copy(
                                         inactiveContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -315,7 +345,7 @@ fun ExtraFilterSettings(
                                         Text(
                                             style = MaterialTheme.typography.bodySmall,
                                             fontWeight = FontWeight.Normal,
-                                            text = label
+                                            text = stringResource(labelId)
                                         )
                                     }
                                 )
@@ -325,7 +355,7 @@ fun ExtraFilterSettings(
                         Spacer(modifier = Modifier.padding(2.dp))
 
                         SingleChoiceSegmentedButtonRow {
-                            sortOption.forEachIndexed { index, label ->
+                            sortOption.forEachIndexed { index, labelId ->
                                 SegmentedButton(
                                     colors = SegmentedButtonDefaults.colors().copy(
                                         inactiveContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -348,7 +378,7 @@ fun ExtraFilterSettings(
                                         Text(
                                             style = MaterialTheme.typography.bodySmall,
                                             fontWeight = FontWeight.Normal,
-                                            text = label
+                                            text = stringResource(labelId)
                                         )
                                     }
                                 )
@@ -360,8 +390,8 @@ fun ExtraFilterSettings(
 
                 SettingsItem(
                     iconVector = Icons.Filled.DeveloperMode,
-                    label = "Enable developer options",
-                    description = "Show hidden settings and debug info relevant only for developers.",
+                    label = stringResource(R.string.enable_developer_mode),
+                    description = stringResource(R.string.enable_developer_mode_msg),
                     checked = settingsViewModel.isDeveloperModeEnabled,
                     onSwitchChange = {
                         settingsViewModel.setDeveloperOptions(it)

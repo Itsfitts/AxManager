@@ -1,8 +1,11 @@
 package frb.axeron.manager.ui.screen
 
+import android.annotation.SuppressLint
+import android.content.ComponentName
 import android.content.Intent
 import android.os.Build
 import android.provider.Settings
+import android.service.quicksettings.TileService
 import android.text.Html
 import android.text.method.LinkMovementMethod
 import android.util.Log
@@ -26,6 +29,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.outlined.Adb
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Computer
 import androidx.compose.material.icons.outlined.Security
@@ -54,14 +60,18 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
+import frb.axeron.adb.AdbPairingService
+import frb.axeron.adb.util.AdbEnvironment
+import frb.axeron.api.core.AxeronSettings
+import frb.axeron.api.core.Starter
 import frb.axeron.manager.R
+import frb.axeron.manager.adb.AdbStateInfo
 import frb.axeron.manager.ui.component.ConfirmResult
 import frb.axeron.manager.ui.component.rememberConfirmDialog
-import frb.axeron.manager.ui.component.rememberLoadingDialog
 import frb.axeron.manager.ui.util.ClipboardUtil
 import frb.axeron.manager.ui.viewmodel.ActivateViewModel
 import frb.axeron.manager.ui.viewmodel.ViewModelGlobal
-import frb.axeron.server.utils.Starter
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import rikka.compatibility.DeviceCompatibility
 
@@ -81,7 +91,7 @@ fun ActivateScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewModelG
             TopAppBar(
                 title = {
                     Text(
-                        text = "Activate",
+                        text = stringResource(R.string.activate),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -134,6 +144,9 @@ fun ActivateScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewModelG
                 }
             }
 
+            if (AdbEnvironment.getAdbTcpPort() > 0) {
+                TcpDebuggingCard(navigator, activateViewModel)
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 WirelessDebuggingCard(navigator, activateViewModel)
             }
@@ -143,6 +156,113 @@ fun ActivateScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewModelG
     }
 }
 
+@Composable
+fun TcpDebuggingCard(
+    navigator: DestinationsNavigator,
+    activateViewModel: ActivateViewModel
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    ElevatedCard(
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = 1.dp
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Adb,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+
+                Spacer(Modifier.width(10.dp))
+
+                Text(
+                    text = stringResource(R.string.activate_by_tcp),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Spacer(Modifier.size(20.dp))
+
+            Text(
+                text = stringResource(R.string.activate_by_tcp_desc),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.size(8.dp))
+            Text(
+                text = stringResource(R.string.tcp_port_value, AdbEnvironment.getAdbTcpPort()),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.size(20.dp))
+
+            Button(
+                onClick = {
+                    activateViewModel.startAdbTcp(context) { ai ->
+                        scope.launch(Dispatchers.Main) {
+                            Toast.makeText(context, ai.message, Toast.LENGTH_SHORT).show()
+                        }
+
+                        Log.e("AxManagerStartAdb", ai.message, ai.cause)
+                        activateViewModel.setTryToActivate(false)
+                    }
+                }
+            ) {
+                if (AdbEnvironment.getAdbTcpPort() != AxeronSettings.getTcpPort()) {
+                    Icon(
+                        imageVector = Icons.Filled.RestartAlt,
+                        modifier = Modifier
+                            .padding(end = 10.dp)
+                            .size(16.dp),
+                        contentDescription = "Restart"
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Filled.PlayArrow,
+                        modifier = Modifier
+                            .padding(end = 10.dp)
+                            .size(16.dp),
+                        contentDescription = "Start"
+                    )
+                }
+                Text(stringResource(R.string.connect_tcp_debugging))
+            }
+
+            Spacer(Modifier.size(8.dp))
+
+            Button(
+                onClick = {
+                    activateViewModel.stopAdbTcp(context) { ai ->
+                        scope.launch(Dispatchers.Main) {
+                            Toast.makeText(context, ai.message, Toast.LENGTH_SHORT).show()
+                        }
+
+                        Log.e("AxManagerStartAdb", ai.message, ai.cause)
+                        activateViewModel.setTryToActivate(false)
+                    }
+                }
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Stop,
+                    modifier = Modifier
+                        .padding(end = 10.dp)
+                        .size(16.dp),
+                    contentDescription = "Stop"
+                )
+                Text(stringResource(R.string.stop_tcp_debugging))
+            }
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @RequiresApi(Build.VERSION_CODES.R)
@@ -152,6 +272,7 @@ fun WirelessDebuggingCard(
     activateViewModel: ActivateViewModel
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     // Panggil sekali untuk update state dari ViewModel
     LaunchedEffect(Unit) {
@@ -167,11 +288,17 @@ fun WirelessDebuggingCard(
     val launcherDeveloper = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) {
-        activateViewModel.startAdb(context, true)
+        activateViewModel.startAdbWireless(context) { ai ->
+            activateViewModel.setTryToActivate(false)
+            if (ai is AdbStateInfo.Success) {
+                val intent = AdbPairingService.stopIntent(context)
+                context.startService(intent)
+            }
+        }
     }
 
     val dialogDeveloper = rememberConfirmDialog()
-    val scope = rememberCoroutineScope()
+
 
     val uriHandler = LocalUriHandler.current
     val stepByStepUrl =
@@ -198,7 +325,7 @@ fun WirelessDebuggingCard(
                 Spacer(modifier = Modifier.width(10.dp))
 
                 Text(
-                    text = "Start via Wireless debugging",
+                    text = stringResource(R.string.activate_by_wireless),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -206,22 +333,26 @@ fun WirelessDebuggingCard(
             Spacer(modifier = Modifier.size(20.dp))
 
             Text(
-                text = stringResource(R.string.activate_by_wireless_description),
+                text = stringResource(R.string.activate_by_wireless_desc),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.size(20.dp))
 
-            val content = stringResource(R.string.enable_wireless_debugging_message)
+            val title = stringResource(R.string.enable_wireless_debugging)
+            val content = stringResource(R.string.enable_wireless_debugging_msg)
+            val confirm = stringResource(R.string.open_developer_opt)
+            val cancel = stringResource(R.string.cancel)
+            val neutral = stringResource(R.string.step_by_step)
             Button(
                 onClick = {
                     scope.launch {
                         val confirmResult = dialogDeveloper.awaitConfirm(
-                            title = "Enable Wireless Debugging",
+                            title = title,
                             content = content,
-                            confirm = "Developer",
-                            dismiss = "Cancel",
-                            neutral = "Step-by-Step"
+                            confirm = confirm,
+                            dismiss = cancel,
+                            neutral = neutral
                         )
                         if (confirmResult == ConfirmResult.Confirmed) {
                             activateViewModel.setLaunchDevSettings(true)
@@ -239,22 +370,48 @@ fun WirelessDebuggingCard(
                         .size(16.dp),
                     contentDescription = "Instruction"
                 )
-                Text("Instruction")
+                Text(stringResource(R.string.instruction))
             }
             Spacer(modifier = Modifier.size(8.dp))
 
             LaunchedEffect(activateViewModel.devSettings) {
                 if (activateViewModel.devSettings) {
-                    val intent = Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).apply {
-                        putExtra(":settings:fragment_args_key", "toggle_adb_wireless")
+                    try {
+                        val intent = Intent(TileService.ACTION_QS_TILE_PREFERENCES).apply {
+                            val packageName = "com.android.settings"
+                            setPackage(packageName)
+                            putExtra(
+                                Intent.EXTRA_COMPONENT_NAME,
+                                ComponentName(
+                                    packageName,
+                                    $$"com.android.settings.development.qstile.DevelopmentTiles$WirelessDebugging"
+                                )
+                            )
+                            addFlags(
+                                Intent.FLAG_ACTIVITY_NEW_TASK or
+                                        Intent.FLAG_ACTIVITY_NO_HISTORY or
+                                        Intent.FLAG_ACTIVITY_CLEAR_TASK or
+                                        Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
+                            )
+                        }
+                        launcherDeveloper.launch(intent)
+                    } catch (_: Exception) {
+                        val intent =
+                            Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).apply {
+                                putExtra(":settings:fragment_args_key", "toggle_adb_wireless")
+                                addFlags(
+                                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                                            Intent.FLAG_ACTIVITY_NO_HISTORY or
+                                            Intent.FLAG_ACTIVITY_CLEAR_TASK or
+                                            Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
+                                )
+                            }
+                        launcherDeveloper.launch(intent)
                     }
-                    launcherDeveloper.launch(intent)
                     Log.d("AxManager", "launchDevSettings")
                     activateViewModel.setLaunchDevSettings(false)
                 }
             }
-
-            val loadingDialog = rememberLoadingDialog()
 
             Button(
                 onClick = {
@@ -265,20 +422,20 @@ fun WirelessDebuggingCard(
                         launcher.launch(intent)
                         return@Button
                     } else {
-                        if (activateViewModel.tryActivate) {
-                            Toast.makeText(context, "Please Wait...", Toast.LENGTH_SHORT).show()
-                            return@Button
-                        }
-                        scope.launch {
-                            val success = loadingDialog.withLoading {
-                                activateViewModel.startAdb(context)
+                        activateViewModel.startAdbWireless(context) { ai ->
+                            scope.launch(Dispatchers.Main) {
+                                Toast.makeText(context, ai.message, Toast.LENGTH_SHORT).show()
                             }
 
-                            if (success) {
-                                navigator.popBackStack()
+                            Log.e("AxManagerStartAdb", ai.message, ai.cause)
+                            activateViewModel.setTryToActivate(false)
+                            if (ai is AdbStateInfo.Failed) {
+                                activateViewModel.startPairingService(context)
+                            } else if (ai is AdbStateInfo.Success) {
+                                val intent = AdbPairingService.stopIntent(context)
+                                context.startService(intent)
                             }
                         }
-
                     }
                 }
             ) {
@@ -291,7 +448,7 @@ fun WirelessDebuggingCard(
                                 .size(16.dp),
                             contentDescription = null
                         )
-                        Text("Enable Notification")
+                        Text(stringResource(R.string.enable_notification))
                     }
 
                     else -> {
@@ -302,7 +459,7 @@ fun WirelessDebuggingCard(
                                 .size(16.dp),
                             contentDescription = "Start"
                         )
-                        Text("Start")
+                        Text(stringResource(R.string.start_pairing))
                     }
                 }
 
@@ -311,13 +468,13 @@ fun WirelessDebuggingCard(
     }
 }
 
+@SuppressLint("ShowToast")
 @Composable
 fun RootCard(
     navigator: DestinationsNavigator,
     activateViewModel: ActivateViewModel
 ) {
-    val context = LocalContext.current
-
+    val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
 
     ElevatedCard(
@@ -341,7 +498,7 @@ fun RootCard(
                 Spacer(modifier = Modifier.width(10.dp))
 
                 Text(
-                    text = "Start (for rooted devices)",
+                    text = stringResource(R.string.activate_by_root),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -354,8 +511,10 @@ fun RootCard(
                 factory = { context ->
                     TextView(context).apply {
                         text = Html.fromHtml(
-                            context.getString(R.string.activate_by_root,
-                                "<b><a href=\"https://dontkillmyapp.com/\">Don\'t kill my app!</a></b>"),
+                            context.getString(
+                                R.string.activate_by_root_msg,
+                                "<b><a href=\"https://dontkillmyapp.com/\">Don\'t kill my app!</a></b>"
+                            ),
                             Html.FROM_HTML_MODE_LEGACY
                         )
                         movementMethod = LinkMovementMethod.getInstance()
@@ -363,27 +522,40 @@ fun RootCard(
                 }
             )
             Spacer(modifier = Modifier.size(20.dp))
-
-            val loadingDialog = rememberLoadingDialog()
-
+            val failed = stringResource(R.string.failed_to_start)
+            val success = stringResource(R.string.activate_success)
+            stringResource(R.string.please_wait)
             Button(
                 onClick = {
-                    if (activateViewModel.tryActivate) {
-                        Toast.makeText(context, "Please Wait...", Toast.LENGTH_SHORT).show()
-                        return@Button
-                    }
-                    scope.launch {
-                        val success = loadingDialog.withLoading {
-                            activateViewModel.startRoot()
-                        }
+                    activateViewModel.startRoot { state ->
+                        scope.launch(Dispatchers.Main) {
 
-                        if (success) {
-                            navigator.popBackStack()
-                        } else {
-                            Toast.makeText(context, "Failed", Toast.LENGTH_SHORT).show()
+                            when (state) {
+                                ActivateViewModel.ACTIVATE_FAILED -> {
+                                    Toast.makeText(
+                                        ctx,
+                                        failed,
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                                ActivateViewModel.ACTIVATE_PROCESS -> {
+                                    Toast.makeText(
+                                        ctx,
+                                        "",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                                ActivateViewModel.ACTIVATE_SUCCESS -> {
+                                    Toast.makeText(
+                                        ctx,
+                                        success,
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
                         }
+                        activateViewModel.setTryToActivate(false)
                     }
-
                 }
             ) {
                 Icon(
@@ -393,7 +565,7 @@ fun RootCard(
                         .size(16.dp),
                     contentDescription = "Start"
                 )
-                Text("Start")
+                Text(stringResource(R.string.start))
             }
         }
     }
@@ -431,14 +603,14 @@ fun ComputerCard() {
                 Spacer(modifier = Modifier.width(10.dp))
 
                 Text(
-                    text = "Start by connecting to a computer",
+                    text = stringResource(R.string.activate_by_computer),
                     fontWeight = FontWeight.SemiBold,
                     style = MaterialTheme.typography.titleMedium
                 )
             }
 
             Text(
-                text = stringResource(R.string.activate_by_computer_description),
+                text = stringResource(R.string.activate_by_computer_desc),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -446,24 +618,32 @@ fun ComputerCard() {
             val dialogDeveloper = rememberConfirmDialog()
             val scope = rememberCoroutineScope()
 
+            val title = stringResource(R.string.view_command)
+            val content = stringResource(
+                R.string.view_command_message,
+                Starter.adbCommand
+            )
+            val confirm = stringResource(R.string.copy)
+            val dismiss = stringResource(R.string.cancel)
+            val neutral = stringResource(R.string.send)
+            val share = stringResource(R.string.share_command)
+            val copied = stringResource(R.string.copied)
+
             Button(
                 onClick = {
 
                     scope.launch {
                         val confirmResult = dialogDeveloper.awaitConfirm(
-                            title = "View Command",
-                            content = context.getString(
-                                R.string.view_command_message,
-                                Starter.adbCommand
-                            ),
+                            title = title,
+                            content = content,
                             markdown = true,
-                            confirm = "Copy",
-                            dismiss = "Cancel",
-                            neutral = "Send"
+                            confirm = confirm,
+                            dismiss = dismiss,
+                            neutral = neutral
                         )
                         if (confirmResult == ConfirmResult.Confirmed) {
                             if (ClipboardUtil.put(context, Starter.adbCommand)) {
-                                Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, copied, Toast.LENGTH_SHORT).show()
                             }
                         }
                         if (confirmResult == ConfirmResult.Neutral) {
@@ -475,7 +655,7 @@ fun ComputerCard() {
                             shareLauncher.launch(
                                 Intent.createChooser(
                                     intent,
-                                    "Share Command"
+                                    share
                                 )
                             )
                         }
@@ -487,9 +667,9 @@ fun ComputerCard() {
                     modifier = Modifier
                         .padding(end = 10.dp)
                         .size(16.dp),
-                    contentDescription = "Command"
+                    contentDescription = title
                 )
-                Text("View Command")
+                Text(title)
             }
         }
     }

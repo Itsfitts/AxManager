@@ -1,9 +1,14 @@
 package frb.axeron.reignite
 
 import android.ddm.DdmHandleAppName
+import android.system.ErrnoException
+import android.system.Os
+import android.util.Log
 import java.io.File
 
 object Igniter {
+
+    private var VERSION = "v1"
 
     private val AXERONDIR = System.getenv("AXERONDIR")
     private val PLUGINS_DIR = File("$AXERONDIR/plugins")
@@ -21,7 +26,8 @@ object Igniter {
         DEBUG = debug
 
         DdmHandleAppName.setAppName("axeron_plugin_igniter", 0)
-        println("AXERON Plugin Manager (Kotlin, busybox-core)")
+        Log.i("test", "AXERON Plugin Manager ($VERSION)")
+        println("AXERON Plugin Manager ($VERSION)")
 
         cleanUpdateDir()
         mainLoop()
@@ -53,29 +59,34 @@ object Igniter {
                     println("- Disable and uninstalling $name")
                     stopPlugin(name, bin)
                     uninstallPlugin(name, uninstall, bin)
+                    return@forEach
                 }
 
                 disable.exists() -> {
                     println("- Disable $name")
                     stopPlugin(name, bin)
+                    return@forEach
                 }
 
                 update.exists() -> {
                     println("- Updating $name")
                     stopPlugin(name, bin)
-                    update.delete()
+                    if (update.delete()) {
+                        println(" - Update $name Complete")
+                    } else {
+                        println(" - Failed to update $name")
+                    }
                 }
 
-                isRunning(name) -> {
+                isServiceRunning(name) -> {
                     val pid = SystemProp.get("log.tag.service.$name")
                     println("- $name:$pid is already running, skip.")
-                }
-
-                else -> {
-                    println("- Starting $name")
-                    startPlugin(name, fsData, sProp, service, bin)
+                    return@forEach
                 }
             }
+
+            println("- Starting $name")
+            startPlugin(name, fsData, sProp, service, bin)
         }
     }
 
@@ -89,13 +100,6 @@ object Igniter {
         }
     }
 
-    private fun shCmd(script: File): String {
-        return if (isStandalone(script))
-            "busybox sh -o standalone \"${script.absolutePath}\""
-        else
-            "busybox sh \"${script.absolutePath}\""
-    }
-
     private fun startPlugin(
         name: String,
         fsData: File,
@@ -103,39 +107,18 @@ object Igniter {
         service: File,
         bin: File
     ) {
-        val script = buildString {
-            append("(")
-
-            // link bin
-            append("mkdir -p ${AXERONXBIN.absolutePath};")
-            if (bin.exists()) {
-                append("for f in ${bin.absolutePath}/*; do ")
-                append($$"busybox ln -sf \"$f\" \"$${AXERONXBIN.absolutePath}/$(basename \"$f\")\"; ")
-                append("done;")
-            }
-
-            // post-fs-data (once)
-            append(postFsDataShell(name, fsData))
-
-            // system.prop (once)
-            append(
-                """
-                if [ "$(resetprop log.tag.props.$name)" != "1" ] && [ -f "${sProp.absolutePath}" ]; then
-                    resetprop -f "${sProp.absolutePath}" &&
-                    resetprop log.tag.props.$name 1
-                fi;
-            """.trimIndent()
-            )
-
-            // service
-            if (service.exists()) {
-                append(startServiceShell(name, service))
-            }
-
-            append(") &")
+        if (bin.exists()) {
+            linkBin(bin)
         }
-
-        exec(arrayOf("busybox", "sh", "-c", script))
+        if (fsData.exists()) {
+            postFsData(name, fsData)
+        }
+        if (sProp.exists()) {
+            applySetprop(name, sProp)
+        }
+        if (service.exists()) {
+            startService(name, service)
+        }
     }
 
     // ===============================
@@ -149,22 +132,34 @@ object Igniter {
             ">/dev/null 2>&1"
     }
 
-    private fun postFsDataShell(name: String, fsData: File): String {
-        val standalone = isStandalone(fsData)
-        val execLine = if (standalone)
-            "busybox sh -o standalone \"${fsData.absolutePath}\""
-        else
-            "busybox sh \"${fsData.absolutePath}\""
+    private fun applySetprop(name: String, sProp: File) {
+        val tag = "log.tag.props.$name"
 
-        return """
-            if [ "$(resetprop log.tag.fs.$name)" != "1" ] && [ -f "${fsData.absolutePath}" ]; then
-                $execLine &&
-                resetprop log.tag.fs.$name 1
-            fi;
-        """.trimIndent()
+        if (SystemProp.get(tag) != "-1") {
+            SystemProp.set("-f", sProp.absolutePath)
+            SystemProp.set(tag, "1")
+            println(" - applySetprop $name")
+        }
     }
 
-    private fun startServiceShell(name: String, service: File): String {
+    private fun postFsData(name: String, fsData: File) {
+        val tag = "log.tag.fs.$name"
+        val standalone = isStandalone(fsData)
+
+        if (SystemProp.get(tag) != "1") {
+            execWait(
+                arrayOf(
+                    "busybox",
+                    "sh" + if (standalone) " -o standalone" else "",
+                    fsData.absolutePath
+                )
+            )
+            SystemProp.set(tag, "1")
+            println(" - postExecuted $name")
+        }
+    }
+
+    private fun startService(name: String, service: File) {
         val tag = "axeron.plugin.$name"
         val log = logPipe(tag)
         val standalone = isStandalone(service)
@@ -174,17 +169,16 @@ object Igniter {
         else
             "exec busybox sh \"${service.absolutePath}\""
 
-        return $$"""
-            (
-              busybox setsid busybox sh -c '
-                echo $$;
-                $$execLine
-              ' $$log | {
-                read pid
-                resetprop log.tag.service.$$name "$pid"
-              }
-            );
+        val service = $$"""
+            busybox setsid sh -c '
+              $$execLine
+            ' $$log &
+            pid=$!
+            resetprop log.tag.service.$$name "$pid"
         """.trimIndent()
+
+        println(" - startService $name")
+        exec(arrayOf("busybox", "sh", "-c", service))
     }
 
 
@@ -192,35 +186,70 @@ object Igniter {
     // STOP / UNINSTALL
     // ===============================
     private fun stopPlugin(name: String, bin: File) {
-        reset("log.tag.fs.$name", "0")
-        reset("log.tag.props.$name", "0")
+        SystemProp.set("log.tag.fs.$name", "0")
+        SystemProp.set("log.tag.props.$name", "0")
 
         val pid = SystemProp.get("log.tag.service.$name")
         if (pid.isNotBlank() && pid != "-1") {
-            exec(arrayOf("busybox", "kill", "-TERM", pid))
+            println(" - try to stopping service $name:-$pid")
+            execWait(arrayOf("busybox", "kill", "-TERM", "-$pid"))
         }
 
-        exec(arrayOf("busybox", "pkill", "-f", name))
-        reset("log.tag.service.$name", "-1")
+        execWait(arrayOf("busybox", "pkill", "-f", name))
+        SystemProp.set("log.tag.service.$name", "-1")
 
         unlinkBin(bin)
     }
 
-    private fun uninstallPlugin(name: String, script: File, bin: File) {
-        if (script.exists()) {
-            exec(arrayOf("busybox", "sh", script.absolutePath))
+    private fun uninstallPlugin(name: String, uninstall: File, bin: File) {
+        if (uninstall.exists()) {
+            val standalone = isStandalone(uninstall)
+            execWait(
+                arrayOf(
+                    "busybox",
+                    "sh" + if (standalone) " -o standalone" else "",
+                    uninstall.absolutePath
+                )
+            )
         }
         unlinkBin(bin)
         File("$AXERONDIR/plugins/$name").deleteRecursively()
     }
 
     // ===============================
-    // BIN CLEAN
+    // LINK BIN
     // ===============================
+    private fun linkBin(bin: File) {
+        if (!bin.isDirectory) return
+
+        AXERONXBIN.mkdirs()
+        bin.listFiles()?.forEach { src ->
+            val dst = File(AXERONXBIN, src.name)
+
+            try {
+                if (dst.exists()) {
+                    if (!dst.delete()) {
+                        println(" - Failed to remove: ${dst.absolutePath}")
+                    }
+                }
+                // buat symlink baru
+                Os.symlink(src.absolutePath, dst.absolutePath)
+                println(" - Linked : ${dst.absolutePath}")
+            } catch (_: ErrnoException) {
+                println(" - Failed Linking : ${src.absolutePath}")
+            }
+        }
+    }
+
     private fun unlinkBin(bin: File) {
         if (!bin.exists()) return
-        bin.listFiles()?.forEach {
-            File(AXERONXBIN, it.name).delete()
+        bin.listFiles()?.forEach { src ->
+            val dst = File(AXERONXBIN, src.name)
+            if (!dst.exists()) return@forEach
+            if (Os.readlink(dst.absolutePath) == src.absolutePath) {
+                println(" - Unlinked : ${dst.absolutePath}")
+                File(AXERONXBIN, src.name).delete()
+            }
         }
     }
 
@@ -233,20 +262,26 @@ object Igniter {
         }
     }
 
-    private fun isRunning(name: String): Boolean {
+    private fun isServiceRunning(name: String): Boolean {
         val pid = SystemProp.get("log.tag.service.$name")
-        if (pid.isNotBlank() && pid != "-1") return true
-        return exec(arrayOf("busybox", "pgrep", "-f", name)) == 0
+        return (pid.isNotBlank() && pid != "-1")
+                || (pid.isNotBlank() && File("/proc/$pid").exists())
+                || execWait(arrayOf("busybox", "pgrep", "-f", name)) == 0
     }
 
-    private fun reset(key: String, value: String) {
-        exec(arrayOf("resetprop", key, value))
-    }
-
-    private fun exec(cmd: Array<String>): Int =
+    private fun execWait(cmd: Array<String>): Int =
         try {
             Runtime.getRuntime().exec(cmd).waitFor()
         } catch (_: Exception) {
             -1
         }
+
+    private fun exec(cmd: Array<String>) {
+        try {
+            Runtime.getRuntime().exec(cmd)
+        } catch (_: Exception) {
+            println("ERROR: $cmd")
+        }
+    }
+
 }

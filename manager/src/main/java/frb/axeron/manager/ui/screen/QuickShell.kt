@@ -80,6 +80,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineHeightStyle
@@ -90,8 +91,7 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import frb.axeron.api.Axeron
-import frb.axeron.api.utils.PathHelper
-import frb.axeron.data.AxeronConstant
+import frb.axeron.api.utils.AnsiFilter
 import frb.axeron.manager.R
 import frb.axeron.manager.ui.component.AxSnackBarHost
 import frb.axeron.manager.ui.component.CheckBoxText
@@ -102,6 +102,8 @@ import frb.axeron.manager.ui.util.LocalSnackbarHost
 import frb.axeron.manager.ui.util.PrefsEnumHelper
 import frb.axeron.manager.ui.viewmodel.QuickShellViewModel
 import frb.axeron.manager.ui.viewmodel.ViewModelGlobal
+import frb.axeron.shared.AxeronApiConstant
+import frb.axeron.shared.PathHelper
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
@@ -168,7 +170,7 @@ fun QuickShellScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewMode
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "QuickShell",
+                            text = stringResource(R.string.quick_shell),
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.SemiBold,
                         )
@@ -213,7 +215,7 @@ fun QuickShellScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewMode
                         saveLogsToDownload(context, logs, snackBarHost)
                     }
                 }) {
-                    Icon(Icons.Default.Save, contentDescription = "Save")
+                    Icon(Icons.Default.Save, contentDescription = stringResource(R.string.save))
                 }
             }
         },
@@ -258,6 +260,8 @@ fun QuickShellScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewMode
                 .padding(horizontal = 16.dp)
                 .fillMaxSize()
         ) {
+
+
             LaunchedEffect(viewModel.clear) {
                 logs.clear()
             }
@@ -269,12 +273,97 @@ fun QuickShellScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewMode
             }
 
             // collect flow
-            LaunchedEffect(Unit) {
+            LaunchedEffect(viewModel.output) {
                 viewModel.output.collect { line ->
-                    if (line.type != QuickShellViewModel.OutputType.TYPE_SPACE && line.output.isBlank()) return@collect
-                    logs.add(line)
+                    val raw = line.output
+
+                    if (line.type != QuickShellViewModel.OutputType.TYPE_SPACE && raw.isBlank()) return@collect
+                    // ===== DETECT SCREEN MODE =====
+
+                    // ===== SCREEN MODE (top, watch, htop, etc) =====
+                    if (AnsiFilter.isScreenControl(raw)) {
+                        val clean = AnsiFilter.stripAnsi(raw)
+
+                        if (clean.isEmpty()) return@collect
+                        if (logs.isEmpty()) {
+                            logs.add(
+                                QuickShellViewModel.Output(
+                                    type = line.type,
+                                    output = clean,
+                                    completed = false
+                                )
+                            )
+                        } else {
+                            val last = logs.last()
+                            logs[logs.lastIndex] = last.copy(output = clean)
+                        }
+                        return@collect
+                    }
+
+
+                    // selain stdout/stderr → selalu item baru
+                    if (line.type != QuickShellViewModel.OutputType.TYPE_STDOUT && line.type != QuickShellViewModel.OutputType.TYPE_STDERR) {
+                        logs.add(line.copy(completed = true))
+                        return@collect
+                    }
+
+                    val hasNewline =
+                        raw.contains('\n')
+
+                    val hasCarriageReturn =
+                        raw.contains('\r') && !raw.contains('\n')
+
+                    val clean = raw.trimEnd('\n', '\r')
+
+                    val last = logs.lastOrNull()
+
+                    when {
+
+                        /* ===============================
+                           CASE 1: CARRIAGE RETURN (\r)
+                           overwrite baris terakhir
+                           =============================== */
+                        hasCarriageReturn && last != null &&
+                                !last.completed &&
+                                last.type == line.type -> {
+
+                            val i = logs.lastIndex
+                            logs[i] = last.copy(
+                                output = clean,
+                                completed = false
+                            )
+                        }
+
+                        /* ===============================
+                           CASE 2: LANJUT BARIS SEBELUMNYA
+                           =============================== */
+                        last != null &&
+                                !last.completed &&
+                                last.type == line.type -> {
+
+                            val i = logs.lastIndex
+                            logs[i] = last.copy(
+                                output = last.output + clean,
+                                completed = hasNewline
+                            )
+                        }
+
+                        /* ===============================
+                           CASE 3: BARIS BARU
+                           =============================== */
+                        else -> {
+                            logs.add(
+                                QuickShellViewModel.Output(
+                                    type = line.type,
+                                    output = clean,
+                                    completed = hasNewline
+                                )
+                            )
+                        }
+                    }
                 }
             }
+
 
             val hScroll = rememberScrollState()
 
@@ -309,21 +398,8 @@ fun QuickShellScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewMode
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontFamily = FontFamily.Monospace
                                 ),
-                                softWrap = false,   // MATIIN WRAP
+                                softWrap = false,
                             )
-//                            Text(
-//                                text = line.output.parseAsAnsiAnnotatedString(),
-//                                style = MaterialTheme.typography.labelSmall.copy(
-//                                    lineHeight = MaterialTheme.typography.labelSmall.fontSize, // samain dengan fontSize
-//                                    lineHeightStyle = LineHeightStyle(
-//                                        alignment = LineHeightStyle.Alignment.Center,
-//                                        trim = LineHeightStyle.Trim.Both
-//                                    )
-//                                ),
-//                                softWrap = false,   // MATIIN WRAP
-//                                fontFamily = FontFamily.Monospace,
-//                                color = MaterialTheme.colorScheme.onSurfaceVariant
-//                            )
                         }
 
                         item {
@@ -406,7 +482,7 @@ fun QuickShellScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewMode
                     ) {
                         Icon(
                             painter = painterResource(R.drawable.ic_exec),
-                            contentDescription = "Send",
+                            contentDescription = stringResource(R.string.exec),
                             modifier = Modifier.size(38.dp),
                             tint = MaterialTheme.colorScheme.primary
                         )
@@ -475,8 +551,8 @@ fun ExtraSettings(
                     }
 
                     SettingsItemExpanded(
-                        label = "Output Filter",
-                        description = "Filter output to show",
+                        label = stringResource(R.string.output_filter),
+                        description = stringResource(R.string.filter_output_desc),
                         iconVector = Icons.Outlined.Output
                     ) { _, expanded ->
                         AnimatedVisibility(
@@ -488,7 +564,7 @@ fun ExtraSettings(
                                 outputOption.forEach { type ->
                                     val isChecked = checkedOutputStates[type] ?: false
                                     CheckBoxText(
-                                        label = "Output ${type.name}",
+                                        label = stringResource(type.labelId),
                                         checked = isChecked
                                     ) {
                                         checkedOutputStates[type] = it
@@ -515,8 +591,8 @@ fun ExtraSettings(
                     }
 
                     SettingsItemExpanded(
-                        label = "Save Log Filter",
-                        description = "Filter log to save",
+                        label = stringResource(R.string.save_log_filter),
+                        description = stringResource(R.string.filter_save_log_desc),
                         iconVector = Icons.Outlined.Save,
                     ) { _, expanded ->
                         AnimatedVisibility(
@@ -528,7 +604,7 @@ fun ExtraSettings(
                                 outputOption.forEach { type ->
                                     val isChecked = checkedSaveStates[type] ?: false
                                     CheckBoxText(
-                                        label = "Save ${type.name}",
+                                        label = stringResource(type.labelId),
                                         checked = isChecked
                                     ) {
                                         checkedSaveStates[type] = it
@@ -555,8 +631,8 @@ fun ExtraSettings(
                     }
 
                     SettingsItemExpanded(
-                        label = "Key Event Blocker",
-                        description = "Block selected key event",
+                        label = stringResource(R.string.block_key_event),
+                        description = stringResource(R.string.block_key_event_desc),
                         iconVector = Icons.Outlined.DoNotTouch,
                     ) { _, expanded ->
                         AnimatedVisibility(
@@ -568,7 +644,7 @@ fun ExtraSettings(
                                 keyEventOption.forEach { type ->
                                     val isChecked = blockedKeyEventStates[type] ?: false
                                     CheckBoxText(
-                                        label = "Block ${type.name}",
+                                        label = stringResource(type.labelId),
                                         checked = isChecked
                                     ) {
                                         blockedKeyEventStates[type] = it
@@ -584,8 +660,8 @@ fun ExtraSettings(
                 item {
                     SettingsItem(
                         iconVector = Icons.Filled.Security,
-                        label = "Shell Restriction",
-                        description = "This feature will restrict background processing",
+                        label = stringResource(R.string.shell_restriction),
+                        description = stringResource(R.string.shell_restriction_desc),
                         checked = quickShellViewModel.isShellRestrictionEnabled,
                         onSwitchChange = { quickShellViewModel.setShellRestriction(it) }
                     )
@@ -594,8 +670,8 @@ fun ExtraSettings(
                 item {
                     SettingsItem(
                         iconVector = Icons.Outlined.Bolt,
-                        label = "Compatibility Mode",
-                        description = "You will use busybox to prevent unsupported command",
+                        label = stringResource(R.string.compat_mode),
+                        description = stringResource(R.string.compat_mode_desc),
                         checked = quickShellViewModel.isCompatModeEnabled,
                         onSwitchChange = { quickShellViewModel.setCompatMode(it) }
                     )
@@ -611,11 +687,13 @@ suspend fun saveLogsToDownload(
     logs: List<QuickShellViewModel.Output>,
     snackbar: SnackbarHostState
 ) {
+    val logSaved = context.getString(R.string.log_saved_to)
+    val logFailed = context.getString(R.string.failed_to_save_log)
     if (logs.isEmpty()) return
     val format = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss", Locale.getDefault())
     val date = format.format(Date())
 
-    val baseDir = PathHelper.getPath(AxeronConstant.folder.PARENT_LOG)
+    val baseDir = PathHelper.getPath(AxeronApiConstant.folder.PARENT_LOG)
     if (!baseDir.exists()) {
         baseDir.mkdirs()
     }
@@ -633,9 +711,9 @@ suspend fun saveLogsToDownload(
         }
         fos.flush()
 
-        snackbar.showSnackbar("Log saved to ${file.absolutePath}")
+        snackbar.showSnackbar(logSaved.format(file.absolutePath))
     } catch (e: Exception) {
-        snackbar.showSnackbar("Failed to save logs: ${e.message}")
+        snackbar.showSnackbar(logFailed.format(e.message))
     }
 }
 

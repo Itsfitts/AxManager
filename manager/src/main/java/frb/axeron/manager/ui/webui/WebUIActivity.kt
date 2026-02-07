@@ -28,13 +28,13 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import frb.axeron.api.Axeron
 import frb.axeron.api.core.AxeronSettings
-import frb.axeron.api.utils.PathHelper
-import frb.axeron.data.AxeronConstant
-import frb.axeron.data.PluginInfo
 import frb.axeron.manager.ui.viewmodel.AppsViewModel
 import frb.axeron.manager.ui.webui.interfaces.AxWebInterface
 import frb.axeron.manager.ui.webui.interfaces.KsuWebInterface
-import frb.axeron.server.utils.AxWebLoader
+import frb.axeron.server.PluginInfo
+import frb.axeron.server.util.AxWebLoader
+import frb.axeron.shared.AxeronApiConstant
+import frb.axeron.shared.PathHelper
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -46,45 +46,64 @@ import java.util.Locale
 
 @SuppressLint("SetJavaScriptEnabled")
 class WebUIActivity : ComponentActivity() {
+    private lateinit var webView: WebView
     private lateinit var insets: Insets
-    private var insetsContinuation: CancellableContinuation<Unit>? = null
     private lateinit var plugin: PluginInfo
 
     private lateinit var fileChooserLauncher: ActivityResultLauncher<Intent>
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
 
-    private lateinit var webView: WebView
+    private lateinit var saveFileLauncher: ActivityResultLauncher<Intent>
+    private var pendingDownloadData: ByteArray? = null
+    private var pendingDownloadSuggestedFilename: String? = null
+
+    private var insetsContinuation: CancellableContinuation<Unit>? = null
 
     fun erudaConsole(context: android.content.Context): String {
         return context.assets.open("js/eruda.min.js").bufferedReader().use { it.readText() }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Enable edge to edge
         enableEdgeToEdge()
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             window.isNavigationBarContrastEnforced = false
         }
 
         super.onCreate(savedInstanceState)
 
-        fileChooserLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            if (result.resultCode == RESULT_OK) {
-                val data = result.data
-                var uris: Array<Uri>? = null
-                data?.dataString?.let {
-                    uris = arrayOf(it.toUri())
+        fileChooserLauncher =
+            registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+                if (result.resultCode == RESULT_OK) {
+                    val data = result.data
+                    var uris: Array<Uri>? = null
+                    data?.dataString?.let {
+                        uris = arrayOf(it.toUri())
+                    }
+                    data?.clipData?.let { clipData ->
+                        uris = Array(clipData.itemCount) { i ->
+                            clipData.getItemAt(i).uri
+                        }
+                    }
+                    filePathCallback?.onReceiveValue(uris)
+                } else {
+                    filePathCallback?.onReceiveValue(null)
                 }
-                data?.clipData?.let { clipData ->
-                    uris = Array(clipData.itemCount) { i -> clipData.getItemAt(i).uri }
-                }
-                filePathCallback?.onReceiveValue(uris)
-                filePathCallback = null
-            } else {
-                filePathCallback?.onReceiveValue(null)
                 filePathCallback = null
             }
-        }
+
+        saveFileLauncher =
+            registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+                if (result.resultCode == RESULT_OK) {
+                    result.data?.data?.let { uri ->
+                        contentResolver.openOutputStream(uri)?.use { out ->
+                            pendingDownloadData?.let { out.write(it) }
+                        }
+                    }
+                }
+                pendingDownloadData = null
+                pendingDownloadSuggestedFilename = null
+            }
 
         lifecycleScope.launch {
             setupWebView()
@@ -126,7 +145,7 @@ class WebUIActivity : ComponentActivity() {
         WebView.setWebContentsDebuggingEnabled(developerOptionsEnabled && enableWebDebugging)
 
         val pluginDir =
-            File(PathHelper.getShellPath(AxeronConstant.folder.PARENT_PLUGIN), plugin.dirId)
+            File(PathHelper.getWorkingPath(Axeron.getAxeronInfo().isRoot(),AxeronApiConstant.folder.PARENT_PLUGIN), plugin.dirId)
         val webRoot = File(pluginDir, "webroot")
 
         insets = Insets(0, 0, 0, 0)
@@ -154,7 +173,9 @@ class WebUIActivity : ComponentActivity() {
             suspendCancellableCoroutine { cont ->
                 insetsContinuation = cont
                 cont.invokeOnCancellation {
-                    insetsContinuation = null
+                    if (insetsContinuation === cont) {
+                        insetsContinuation = null
+                    }
                 }
             }
         }
@@ -223,7 +244,8 @@ class WebUIActivity : ComponentActivity() {
                     fileChooserParams: FileChooserParams?
                 ): Boolean {
                     this@WebUIActivity.filePathCallback = filePathCallback
-                    val intent = fileChooserParams?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply { type = "*/*" }
+                    val intent = fileChooserParams?.createIntent()
+                        ?: Intent(Intent.ACTION_GET_CONTENT).apply { type = "*/*" }
                     if (fileChooserParams?.mode == FileChooserParams.MODE_OPEN_MULTIPLE) {
                         intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
                     }
@@ -250,7 +272,11 @@ class WebUIActivity : ComponentActivity() {
                                 saveDataUrlToDownloads(dataUrl, mimeType)
                                 return true
                             } catch (_: org.json.JSONException) {
-                                Toast.makeText(this@WebUIActivity, "Error parsing blob data from console", Toast.LENGTH_LONG).show()
+                                Toast.makeText(
+                                    this@WebUIActivity,
+                                    "Error parsing blob data from console",
+                                    Toast.LENGTH_LONG
+                                ).show()
                             }
                         }
                     }
@@ -300,29 +326,40 @@ class WebUIActivity : ComponentActivity() {
     }
 
     private fun extractMimeTypeAndBase64Data(dataUrl: String): Pair<String, String>? {
-        val prefix = "data:"
-        if (!dataUrl.startsWith(prefix)) return null
+        if (!dataUrl.startsWith("data:")) return null
         val commaIndex = dataUrl.indexOf(',')
         if (commaIndex == -1) return null
-        val header = dataUrl.substring(prefix.length, commaIndex)
+
+        val header = dataUrl.substring(5, commaIndex)
         val data = dataUrl.substring(commaIndex + 1)
-        val mimeType = header.substringBefore(';', header).ifEmpty { "application/octet-stream" }
-        return Pair(mimeType, data)
+        val mimeType = header.substringBefore(';').ifEmpty {
+            "application/octet-stream"
+        }
+
+        return mimeType to data
     }
 
-    private lateinit var saveFileLauncher: ActivityResultLauncher<Intent>
-    private var pendingDownloadData: ByteArray? = null
-    private var pendingDownloadSuggestedFilename: String? = null
-
-    private fun saveDataUrlToDownloads(dataUrl: String, mimeTypeFromListener: String) {
-        val (mimeType, base64Data) = extractMimeTypeAndBase64Data(dataUrl) ?: run {
+    private fun saveDataUrlToDownloads(
+        dataUrl: String,
+        mimeTypeFromListener: String
+    ) {
+        val extracted = extractMimeTypeAndBase64Data(dataUrl) ?: run {
             Toast.makeText(this, "Invalid data URL", Toast.LENGTH_SHORT).show()
             return
         }
 
-        val finalMimeType = if (mimeType == "application/octet-stream" && mimeTypeFromListener.isNotBlank()) mimeTypeFromListener else mimeType
-        var extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(finalMimeType)
-        if (extension != null && !extension.startsWith(".")) {
+        val (mimeFromData, base64Data) = extracted
+
+        val finalMimeType =
+            if (mimeFromData == "application/octet-stream" && mimeTypeFromListener.isNotBlank())
+                mimeTypeFromListener
+            else
+                mimeFromData
+
+        var extension =
+            MimeTypeMap.getSingleton().getExtensionFromMimeType(finalMimeType)
+
+        if (!extension.isNullOrEmpty() && !extension.startsWith(".")) {
             extension = ".$extension"
         }
         if (extension.isNullOrEmpty()) {
@@ -330,13 +367,10 @@ class WebUIActivity : ComponentActivity() {
         }
 
         val sdf = SimpleDateFormat("yyyy-MM-dd_HHmmss", Locale.getDefault())
-        val formattedDate = sdf.format(Date(System.currentTimeMillis()))
-        val fileName = "${plugin.prop.id}_${formattedDate}${extension}"
+        val fileName = "${plugin.dirId}_${sdf.format(Date())}${extension ?: ""}"
 
         try {
-            val decodedData = Base64.decode(base64Data, Base64.DEFAULT)
-
-            pendingDownloadData = decodedData
+            pendingDownloadData = Base64.decode(base64Data, Base64.DEFAULT)
             pendingDownloadSuggestedFilename = fileName
 
             val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
@@ -344,10 +378,15 @@ class WebUIActivity : ComponentActivity() {
                 type = finalMimeType
                 putExtra(Intent.EXTRA_TITLE, fileName)
             }
+
             saveFileLauncher.launch(intent)
 
         } catch (e: Exception) {
-            Toast.makeText(this, "Error preparing file for saving: ${e.message}", Toast.LENGTH_LONG).show()
+            Toast.makeText(
+                this,
+                "Error preparing file: ${e.message}",
+                Toast.LENGTH_LONG
+            ).show()
             pendingDownloadData = null
             pendingDownloadSuggestedFilename = null
         }

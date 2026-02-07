@@ -1,5 +1,3 @@
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -7,19 +5,13 @@ plugins {
     alias(libs.plugins.ksp)
     alias(libs.plugins.rikka.tools.refine)
     id("kotlin-parcelize")
-    alias(libs.plugins.baselineprofile)
 }
 
 android {
     namespace = "frb.axeron.manager"
-    compileSdk = 36
 
     defaultConfig {
         applicationId = "frb.axeron.manager"
-        minSdk = 26
-        targetSdk = 36
-        versionCode = AppVersion.VERSION_CODE
-        versionName = AppVersion.VERSION_NAME
     }
 
     buildTypes {
@@ -53,18 +45,6 @@ android {
         buildConfig = true
         compose = true
     }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_21
-        targetCompatibility = JavaVersion.VERSION_21
-    }
-
-}
-
-kotlin {
-    compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_21)
-    }
 }
 
 dependencies {
@@ -78,9 +58,6 @@ dependencies {
     ksp(libs.compose.destinations.ksp)
     implementation(libs.colorpicker.compose)
 
-    implementation(libs.androidx.profileinstaller)
-    "baselineProfile"(project(":baselineprofile"))
-
     implementation(libs.compose.coil)
     implementation(libs.appiconloader.coil)
 
@@ -93,20 +70,27 @@ dependencies {
     compileOnly(libs.rikka.hidden.stub)
 
     implementation(libs.topjohnwu.libsu.core)
+    implementation(libs.topjohnwu.libsu.io)
 
     implementation(libs.gson)
     implementation(libs.markdown)
     implementation(project(":server"))
 
     implementation(project(":aidl"))
+    implementation(project(":api"))
     implementation(project(":adb"))
-    implementation(project(":data-shared"))
-    implementation(project(":api-manager"))
-    implementation(project(":shizuku-server"))
+    implementation(project(":shared"))
+    implementation(project(":provider"))
+    implementation(project(":server-shared"))
+    implementation(project(":axerish"))
     implementation(libs.sdp.android)
     implementation(libs.material)
     implementation(libs.mmrl.ui)
     implementation(libs.hiddenapibypass)
     implementation(libs.ansi.library)
     implementation(libs.ansi.library.ktx)
+
+    implementation(libs.sheet.compose.dialogs.core)
+    implementation(libs.sheet.compose.dialogs.list)
+    implementation(libs.sheet.compose.dialogs.input)
 }

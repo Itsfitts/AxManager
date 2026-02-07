@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineHeightStyle
@@ -43,15 +44,16 @@ import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import frb.axeron.api.Axeron
 import frb.axeron.api.AxeronPluginService
 import frb.axeron.api.core.AxeronSettings
-import frb.axeron.api.utils.PathHelper
-import frb.axeron.data.AxeronConstant
-import frb.axeron.data.PluginInfo
+import frb.axeron.api.utils.AnsiFilter
+import frb.axeron.manager.R
 import frb.axeron.manager.ui.component.AxSnackBarHost
 import frb.axeron.manager.ui.component.KeyEventBlocker
 import frb.axeron.manager.ui.util.LocalSnackbarHost
+import frb.axeron.server.PluginInfo
+import frb.axeron.shared.AxeronApiConstant
+import frb.axeron.shared.PathHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -79,26 +81,36 @@ fun ExecutePluginActionScreen(
         // Disable back button if action is running
     }
 
+    val scope = rememberCoroutineScope()
     var text by rememberSaveable { mutableStateOf("") }
-    var tempText: String
     val logContent = rememberSaveable { StringBuilder() }
 
     LaunchedEffect(Unit) {
         if (text.isNotEmpty()) {
             return@LaunchedEffect
         }
-        withContext(Dispatchers.IO) {
-            val pluginPath = File(PathHelper.getShellPath(AxeronConstant.folder.PARENT_PLUGIN), plugin.dirId)
+        launch(Dispatchers.IO) {
+            val pluginPath =
+                File(
+                    PathHelper.getWorkingPath(
+                        Axeron.getAxeronInfo().isRoot(),
+                        AxeronApiConstant.folder.PARENT_PLUGIN
+                    ), plugin.dirId
+                )
             val pluginBin = "${pluginPath.absolutePath}/system/bin"
-            val cmd = "export PATH=$pluginBin:\$PATH; cd \"$pluginPath\"; sh ./action.sh; RES=$?; cd /; exit \$RES"
+            val cmd =
+                $$"export PATH=$$pluginBin:$PATH; cd \"$$pluginPath\"; sh ./action.sh; RES=$?; cd /; exit $RES"
             AxeronPluginService.execWithIO(
                 cmd = cmd,
                 onStdout = {
-                    tempText = "$it\n"
-                    if (tempText.startsWith("[H[J")) { // clear command
-                        text = tempText.drop(6)
+                    if (AnsiFilter.isScreenControl(it)) { // clear command
+                        launch(Dispatchers.Main) {
+                            text = AnsiFilter.stripAnsi(it) + "\n"
+                        }
                     } else {
-                        text += tempText
+                        launch(Dispatchers.Main) {
+                            text += "$it\n"
+                        }
                     }
                     logContent.append(it).append("\n")
                 },
@@ -111,8 +123,10 @@ fun ExecutePluginActionScreen(
     }
 
     val snackBarHost = LocalSnackbarHost.current
-    val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
+
+    val logSaved = stringResource(R.string.log_saved_to)
+    val logFailed = stringResource(R.string.failed_to_save_log)
 
     Scaffold(
         topBar = {
@@ -124,10 +138,11 @@ fun ExecutePluginActionScreen(
                 onSave = {
                     if (!isActionRunning) {
                         scope.launch {
-                            val format = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss", Locale.getDefault())
+                            val format =
+                                SimpleDateFormat("yyyy-MM-dd-HH-mm-ss", Locale.getDefault())
                             val date = format.format(Date())
 
-                            val baseDir = PathHelper.getPath(AxeronConstant.folder.PARENT_LOG)
+                            val baseDir = PathHelper.getPath(AxeronApiConstant.folder.PARENT_LOG)
                             if (!baseDir.exists()) {
                                 baseDir.mkdirs()
                             }
@@ -135,13 +150,14 @@ fun ExecutePluginActionScreen(
                             val file = File(baseDir, "AxManager_action_log_${date}.log")
 
                             try {
-                                val fos = Axeron.newFileService().getStreamSession(file.absolutePath, true, false).outputStream
+                                val fos = Axeron.newFileService()
+                                    .getStreamSession(file.absolutePath, true, false).outputStream
                                 fos.write("$logContent\n".toByteArray())
                                 fos.flush()
 
-                                snackBarHost.showSnackbar("Log saved to ${file.absolutePath}")
+                                snackBarHost.showSnackbar(logSaved.format(file.absolutePath))
                             } catch (e: Exception) {
-                                snackBarHost.showSnackbar("Failed to save logs: ${e.message}")
+                                snackBarHost.showSnackbar(logFailed.format(e.message))
                             }
                         }
                     }
@@ -151,7 +167,7 @@ fun ExecutePluginActionScreen(
         floatingActionButton = {
             if (!isActionRunning) {
                 ExtendedFloatingActionButton(
-                    text = { Text(text = "Close") },
+                    text = { Text(text = stringResource(R.string.close)) },
                     icon = { Icon(Icons.Filled.Close, contentDescription = null) },
                     onClick = {
                         navigator.popBackStack()
@@ -187,7 +203,7 @@ fun ExecutePluginActionScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontFamily = FontFamily.Monospace
                 ),
-                softWrap = true,   // MATIIN WRAP
+                softWrap = true,
             )
         }
     }
@@ -199,7 +215,7 @@ private fun TopBar(isActionRunning: Boolean, onBack: () -> Unit = {}, onSave: ()
     TopAppBar(
         title = {
             Text(
-                text = "Action",
+                text = stringResource(R.string.action),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
             )

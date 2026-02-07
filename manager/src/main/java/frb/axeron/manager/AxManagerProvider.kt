@@ -1,17 +1,18 @@
 package frb.axeron.manager
 
+import android.os.Build
 import android.os.Bundle
 import androidx.core.os.bundleOf
-import frb.axeron.api.core.AxeronProvider
+import frb.axeron.api.Axeron
+import frb.axeron.ktx.workerHandler
+import frb.axeron.provider.AxeronProvider
+import frb.axeron.server.util.Logger
+import frb.axeron.shared.ShizukuApiConstant.USER_SERVICE_ARG_PGID
+import frb.axeron.shared.ShizukuApiConstant.USER_SERVICE_ARG_TOKEN
 import moe.shizuku.api.BinderContainer
-import rikka.shizuku.Shizuku
-import rikka.shizuku.ShizukuApiConstants
-import rikka.shizuku.ktx.workerHandler
-import rikka.shizuku.server.util.Logger
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
-import frb.axeron.manager.utils.getParcelableCompat
 
 class AxManagerProvider : AxeronProvider() {
 
@@ -29,37 +30,43 @@ class AxManagerProvider : AxeronProvider() {
             try {
                 extras.classLoader = BinderContainer::class.java.classLoader
 
-                val token = extras.getString(ShizukuApiConstants.USER_SERVICE_ARG_TOKEN) ?: return null
-                val pid = extras.getInt(ShizukuApiConstants.USER_SERVICE_ARG_PID)
-                val binder = extras.getParcelableCompat(EXTRA_BINDER, BinderContainer::class.java)?.binder ?: return null
+                val token = extras.getString(USER_SERVICE_ARG_TOKEN) ?: return null
+                val pgid = extras.getInt(USER_SERVICE_ARG_PGID)
+                val binder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    extras.getParcelable(EXTRA_BINDER,  BinderContainer::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    extras.getParcelable(EXTRA_BINDER)
+                }?.binder ?: return null
+//                val binder = extras.getParcelableCompat(EXTRA_BINDER, BinderContainer::class.java)?.binder ?: return null
 
                 val countDownLatch = CountDownLatch(1)
                 var reply: Bundle? = Bundle()
 
-                val listener = object : Shizuku.OnBinderReceivedListener {
+                val listener = object : Axeron.OnBinderReceivedListener {
 
                     override fun onBinderReceived() {
                         try {
-                            Shizuku.attachUserService(binder, bundleOf(
-                                ShizukuApiConstants.USER_SERVICE_ARG_TOKEN to token,
-                                ShizukuApiConstants.USER_SERVICE_ARG_PID to pid
+                            Axeron.attachUserService(binder, bundleOf(
+                                USER_SERVICE_ARG_TOKEN to token,
+                                USER_SERVICE_ARG_PGID to pgid
                             )
                             )
                             reply!!.putParcelable(EXTRA_BINDER,
-                                BinderContainer(Shizuku.getBinder())
+                                BinderContainer(Axeron.getShizukuService().asBinder())
                             )
                         } catch (e: Throwable) {
                             LOGGER.e(e, "attachUserService $token")
                             reply = null
                         }
 
-                        Shizuku.removeBinderReceivedListener(this)
+                        Axeron.removeBinderReceivedListener(this)
 
                         countDownLatch.countDown()
                     }
                 }
 
-                Shizuku.addBinderReceivedListenerSticky(listener, workerHandler)
+                Axeron.addBinderReceivedListenerSticky(listener, workerHandler)
 
                 return try {
                     countDownLatch.await(5, TimeUnit.SECONDS)

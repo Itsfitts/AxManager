@@ -11,9 +11,11 @@
 -dontwarn com.android.**
 -dontwarn android.ddm.**
 
--keepclassmembers class * implements android.os.Parcelable {
-    public static final ** CREATOR;
+-keep class * implements android.os.Parcelable {
+    public static final android.os.Parcelable$Creator *;
 }
+
+-keepnames class * implements android.os.Parcelable
 
 -keepclasseswithmembernames,includedescriptorclasses class * {
     native <methods>;
@@ -38,7 +40,20 @@
     public <init>(...);
 }
 
--assumenosideeffects class frb.axeron.server.utils.Logger {
+# Entrance of Shizuku service
+-keep class frb.axeron.server.ShizukuServiceIntercept
+
+# Entrance of user service starter
+-keep class frb.axeron.starter.ServiceStarter {
+    public static void main(java.lang.String[]);
+    public <init>(...);
+}
+
+-keep class frb.axeron.server.shell.Shell {
+    public static void main(java.lang.String[], java.lang.String, android.os.IBinder, android.os.Handler);
+}
+
+-assumenosideeffects class frb.axeron.server.util.Logger {
     public *** d(...);
 }
 

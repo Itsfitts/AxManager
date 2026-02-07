@@ -2,6 +2,7 @@ package frb.axeron.manager.ui
 
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.widget.ImageView
 import androidx.activity.ComponentActivity
@@ -39,24 +40,23 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import frb.axeron.api.Axeron
+import frb.axeron.ktx.workerHandler
 import frb.axeron.manager.R
 import frb.axeron.manager.ui.theme.AxManagerTheme
-import frb.axeron.server.utils.Logger
+import frb.axeron.server.util.Logger
+import frb.axeron.shared.ShizukuApiConstant.REQUEST_PERMISSION_REPLY_ALLOWED
+import frb.axeron.shared.ShizukuApiConstant.REQUEST_PERMISSION_REPLY_IS_ONETIME
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import rikka.shizuku.Shizuku
-import rikka.shizuku.ShizukuApiConstants.REQUEST_PERMISSION_REPLY_ALLOWED
-import rikka.shizuku.ShizukuApiConstants.REQUEST_PERMISSION_REPLY_IS_ONETIME
-import rikka.shizuku.ktx.workerHandler
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
-import frb.axeron.manager.utils.getParcelableExtraCompat
 
 class RequestPermissionActivity : ComponentActivity() {
 
@@ -68,7 +68,7 @@ class RequestPermissionActivity : ComponentActivity() {
             putBoolean(REQUEST_PERMISSION_REPLY_IS_ONETIME, onetime)
         }
         try {
-            Shizuku.dispatchPermissionConfirmationResult(uid, pid, code, data)
+            Axeron.dispatchPermissionConfirmationResult(uid, pid, code, data)
         } catch (e: Throwable) {
             LOGGER.e("dispatchPermissionConfirmationResult")
         }
@@ -76,13 +76,13 @@ class RequestPermissionActivity : ComponentActivity() {
 
     private fun waitForBinder(): Boolean {
         val latch = CountDownLatch(1)
-        val listener = object : Shizuku.OnBinderReceivedListener {
+        val listener = object : Axeron.OnBinderReceivedListener {
             override fun onBinderReceived() {
                 latch.countDown()
-                Shizuku.removeBinderReceivedListener(this)
+                Axeron.removeBinderReceivedListener(this)
             }
         }
-        Shizuku.addBinderReceivedListenerSticky(listener, workerHandler)
+        Axeron.addBinderReceivedListenerSticky(listener, workerHandler)
         return try {
             latch.await(5, TimeUnit.SECONDS)
         } catch (e: TimeoutException) {
@@ -97,7 +97,12 @@ class RequestPermissionActivity : ComponentActivity() {
         val uid = intent.getIntExtra("uid", -1)
         val pid = intent.getIntExtra("pid", -1)
         val requestCode = intent.getIntExtra("requestCode", -1)
-        val ai = intent.getParcelableExtraCompat("applicationInfo", ApplicationInfo::class.java)
+        val ai = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra("applicationInfo", ApplicationInfo::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra("applicationInfo")
+        }
 
         if (uid == -1 || pid == -1 || ai == null || !waitForBinder()) {
             finish()
@@ -105,7 +110,7 @@ class RequestPermissionActivity : ComponentActivity() {
         }
 
         val permission =
-            Shizuku.checkRemotePermission("android.permission.GRANT_RUNTIME_PERMISSIONS") == PackageManager.PERMISSION_GRANTED
+            Axeron.checkRemotePermission("android.permission.GRANT_RUNTIME_PERMISSIONS") == PackageManager.PERMISSION_GRANTED
 
         if (!permission) {
             setResult(uid, pid, requestCode, allowed = false, onetime = true)
@@ -169,7 +174,6 @@ fun RequestPermissionDialog(
                 .padding(all = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // 🔹 Info Aplikasi
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
@@ -190,7 +194,7 @@ fun RequestPermissionDialog(
                     Text(applicationInfo.packageName, style = MaterialTheme.typography.bodySmall)
                 }
                 Text(
-                    text = "UID: $uid",
+                    text = stringResource(R.string.uid_value, uid),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -204,20 +208,20 @@ fun RequestPermissionDialog(
             )
             Spacer(Modifier.height(12.dp))
             Text(
-                "Permission Request",
+                stringResource(R.string.permission_request),
                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                 textAlign = TextAlign.Center
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                "The app requires permission to continue operating.\nGrant permission so the feature can run properly.",
+                stringResource(R.string.permission_request_desc),
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(24.dp))
 
-            // 🔹 Tombol aksi + countdown
+            // Tombol aksi + countdown
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.SpaceEvenly
@@ -229,7 +233,7 @@ fun RequestPermissionDialog(
                     },
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("Allow all the time")
+                    Text(stringResource(R.string.permission_allow_all_time))
                 }
                 Button(
                     modifier = Modifier.fillMaxWidth(),
@@ -242,7 +246,7 @@ fun RequestPermissionDialog(
                         contentColor = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 ) {
-                    Text("Allow once this time")
+                    Text(stringResource(R.string.permission_allow_one_time))
                 }
                 OutlinedButton(
                     modifier = Modifier.fillMaxWidth(),
@@ -259,7 +263,7 @@ fun RequestPermissionDialog(
                         color = MaterialTheme.colorScheme.error
                     )
                 ) {
-                    Text("Don't Allow (${remaining}s)")
+                    Text(stringResource(R.string.permission_dont_allow_countdown, remaining))
                 }
 
             }

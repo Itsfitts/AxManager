@@ -17,12 +17,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
 import frb.axeron.api.Axeron
-import frb.axeron.api.utils.PathHelper
-import frb.axeron.data.AxeronConstant
-import frb.axeron.manager.axApp
+import frb.axeron.manager.AxeronApplication.Companion.axeronApp
 import frb.axeron.manager.ui.util.HanziToPinyin
 import frb.axeron.manager.ui.webui.AppIconUtil
-import frb.axeron.server.utils.AxWebLoader
+import frb.axeron.server.util.AxWebLoader
+import frb.axeron.shared.AxeronApiConstant
+import frb.axeron.shared.PathHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.parcelize.Parcelize
@@ -63,7 +63,12 @@ class AppsViewModel(application: Application) : AndroidViewModel(application) {
             get() = packageInfo.applicationInfo!!.uid
     }
 
-    val file = File(PathHelper.getShellPath(AxeronConstant.folder.PARENT_BINARY), "added_apps.txt")
+    val file = File(
+        PathHelper.getWorkingPath(
+            Axeron.getAxeronInfo().isRoot(),
+            AxeronApiConstant.folder.PARENT_BINARY
+        ), "added_apps.txt"
+    )
     var search by mutableStateOf("")
 
     val addedList by derivedStateOf {
@@ -113,7 +118,7 @@ class AppsViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }.filterNot {
                 // jangan masukin ke list kalau system app atau app lo sendiri
-                it.packageName == axApp.packageName ||
+                it.packageName == axeronApp.packageName ||
                         it.packageInfo.applicationInfo!!.flags.and(ApplicationInfo.FLAG_SYSTEM) != 0
             }
 

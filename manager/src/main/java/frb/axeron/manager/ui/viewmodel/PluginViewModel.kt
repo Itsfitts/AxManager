@@ -13,10 +13,10 @@ import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import frb.axeron.api.Axeron
-import frb.axeron.data.PluginInfo
-import frb.axeron.data.PluginInstaller
-import frb.axeron.manager.axApp
+import frb.axeron.manager.AxeronApplication.Companion.axeronApp
 import frb.axeron.manager.ui.util.HanziToPinyin
+import frb.axeron.server.PluginInfo
+import frb.axeron.server.PluginInstaller
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -171,7 +171,7 @@ class PluginViewModel(application: Application) : AndroidViewModel(application) 
         val result = kotlin.runCatching {
             val url = pluginInfo.prop.updateJson
             Log.i(TAG, "checkUpdate url: $url")
-            val response = axApp.okhttpClient.newCall(
+            val response = axeronApp.okhttpClient.newCall(
                 Request.Builder().url(url).build()
             ).execute()
             Log.d(TAG, "checkUpdate code: ${response.code}")

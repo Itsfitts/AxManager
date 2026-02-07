@@ -1,7 +1,6 @@
 package frb.axeron.manager.ui.screen
 
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -23,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -30,6 +30,7 @@ import coil.request.ImageRequest
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
+import frb.axeron.manager.R
 import frb.axeron.manager.ui.component.SearchAppBar
 import frb.axeron.manager.ui.component.UseLifecycle
 import frb.axeron.manager.ui.viewmodel.ViewModelGlobal
@@ -47,7 +48,7 @@ fun PrivilegeScreen(
 
     UseLifecycle(
         {
-            privilegeViewModel.loadInstalledApps()
+            privilegeViewModel.loadInstalledApps(false)
         }
     )
 
@@ -56,12 +57,12 @@ fun PrivilegeScreen(
             SearchAppBar(
                 title = {
                     Text(
-                        text = "Privilege Manager",
+                        text = stringResource(R.string.privilege_manager),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.SemiBold,
                     )
                 },
-                searchLabel = "Search Apps",
+                searchLabel = stringResource(R.string.search_label_apps),
                 searchText = privilegeViewModel.search,
                 onSearchTextChange = { privilegeViewModel.search = it },
                 onClearClick = { privilegeViewModel.search = "" },
@@ -131,7 +132,6 @@ fun PrivilegeScreen(
                                     } else {
                                         privilegeViewModel.revoke(app.packageInfo.applicationInfo!!.uid)
                                     }
-                                    privilegeViewModel.loadInstalledApps()
                                 }
                             )
                         }

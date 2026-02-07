@@ -64,6 +64,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineHeightStyle
@@ -74,21 +75,26 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import frb.axeron.api.Axeron
+import frb.axeron.api.AxeronCommandSession
 import frb.axeron.api.AxeronPluginService
 import frb.axeron.api.AxeronPluginService.flashPlugin
 import frb.axeron.api.core.AxeronSettings
-import frb.axeron.api.utils.PathHelper
-import frb.axeron.data.AxeronConstant
-import frb.axeron.data.PluginInstaller
+import frb.axeron.api.core.Starter
+import frb.axeron.api.utils.AnsiFilter
 import frb.axeron.manager.BuildConfig
+import frb.axeron.manager.R
 import frb.axeron.manager.ui.component.AxSnackBarHost
 import frb.axeron.manager.ui.component.KeyEventBlocker
 import frb.axeron.manager.ui.component.rememberLoadingDialog
+import frb.axeron.manager.ui.component.resolveDisplayName
 import frb.axeron.manager.ui.theme.GREEN
 import frb.axeron.manager.ui.theme.ORANGE
 import frb.axeron.manager.ui.theme.RED
 import frb.axeron.manager.ui.util.LocalSnackbarHost
 import frb.axeron.manager.ui.viewmodel.ViewModelGlobal
+import frb.axeron.server.PluginInstaller
+import frb.axeron.shared.AxeronApiConstant
+import frb.axeron.shared.PathHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -152,7 +158,7 @@ fun InstallDialog(
             ) {
 
                 Text(
-                    text = "Install Plugin?",
+                    text = stringResource(R.string.ask_install_plugin),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -160,7 +166,7 @@ fun InstallDialog(
                 Spacer(modifier = Modifier.height(4.dp))
 
                 Text(
-                    text = "The following modules will be installed:",
+                    text = stringResource(R.string.ask_install_plugin_msg),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -175,7 +181,9 @@ fun InstallDialog(
 
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
                 ) {
                     items(installers.size) { index ->
                         val pluginInstaller = installers[index]
@@ -208,15 +216,15 @@ fun InstallDialog(
                                     modifier = Modifier.weight(1f)
                                 ) {
                                     Text(
-                                        text = pluginInstaller.uri.getFileName(LocalContext.current),
+                                        text = pluginInstaller.uri.resolveDisplayName(LocalContext.current),
                                         style = MaterialTheme.typography.bodyLarge,
                                         maxLines = 1
                                     )
                                     Text(
                                         text = if (pluginInstaller.autoEnable)
-                                            "Auto enabled after install"
+                                            stringResource(R.string.auto_enable_plugin)
                                         else
-                                            "Will remain disabled",
+                                            stringResource(R.string.manual_enable_plugin),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -242,7 +250,7 @@ fun InstallDialog(
                     horizontalArrangement = Arrangement.End
                 ) {
                     TextButton(onClick = onDismiss) {
-                        Text("Cancel")
+                        Text(stringResource(R.string.cancel))
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     TextButton(
@@ -250,7 +258,7 @@ fun InstallDialog(
                             onConfirm(FlashIt.FlashPlugins(installers))
                         }
                     ) {
-                        Text("Install")
+                        Text(stringResource(R.string.install))
                     }
                 }
             }
@@ -319,49 +327,66 @@ fun FlashScreen(
         }
     )
 
-    var tempText: String
+    val scope = rememberCoroutineScope()
     val logContent = rememberSaveable { StringBuilder() }
     //Is text is a log?
     var text by rememberSaveable { mutableStateOf("") }
     var hasFlashed by rememberSaveable { mutableStateOf(false) }
 
+    val errorSaveLog = stringResource(R.string.log_error_code)
+
     LaunchedEffect(pendingFlashIt) {
         Log.d("FlashScreen", "flashing: $flashing")
         if (pendingFlashIt == null || text.isNotEmpty() || hasFlashed) return@LaunchedEffect
         hasFlashed = true
-        withContext(Dispatchers.IO) {
-            flashIt(
+        // No need for an external 'scope' when inside LaunchedEffect
+        launch(Dispatchers.IO) {
+            val result = flashIt(
                 pendingFlashIt!!,
                 onStdout = {
-                    tempText = "$it\n"
-                    if (tempText.startsWith("[H[J")) { // clear command
-                        text = tempText.substring(6)
-                    } else {
-                        text += tempText
-                    }
                     logContent.append(it).append("\n")
+                    if (AnsiFilter.isScreenControl(it)) { // clear command
+                        // Switch to the main thread to update state
+                        launch(Dispatchers.Main) {
+                            text = AnsiFilter.stripAnsi(it) + "\n"
+                        }
+                    } else {
+                        // Switch to the main thread to update state
+                        launch(Dispatchers.Main) {
+                            text += "$it\n"
+                        }
+                    }
                 },
                 onStderr = {
                     logContent.append(it).append("\n")
-                }).apply {
-                if (code != 0) {
-                    text += "Error code: $code.\n $err Please save and check the log.\n"
+                })
+
+            // After the background task is done, switch to the main thread to update the final state
+            withContext(Dispatchers.Main) {
+                var finalLogText = ""
+                if (result.code != 0) {
+                    finalLogText += errorSaveLog.format(result.code, result.err)
                 }
-                if (showReboot) {
-                    text += "\n\n\n"
+                if (result.showReboot) {
+                    finalLogText += "\n\n\n"
                 }
-                flashing = if (code == 0) FlashingStatus.SUCCESS else FlashingStatus.FAILED
+                if (finalLogText.isNotEmpty()) {
+                    text += finalLogText
+                }
+                flashing = if (result.code == 0) FlashingStatus.SUCCESS else FlashingStatus.FAILED
             }
         }
     }
 
-    val scope = rememberCoroutineScope()
+
     val snackBarHost = LocalSnackbarHost.current
     val scrollState = rememberScrollState()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior(rememberTopAppBarState())
 
     Scaffold(
         topBar = {
+            val logSaved = stringResource(R.string.log_saved_to)
+            val logFailed = stringResource(R.string.failed_to_save_log)
             TopBar(
                 flashing,
                 onBack = dropUnlessResumed {
@@ -374,7 +399,7 @@ fun FlashScreen(
                         val format = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss", Locale.getDefault())
                         val date = format.format(Date())
 
-                        val baseDir = PathHelper.getPath(AxeronConstant.folder.PARENT_LOG)
+                        val baseDir = PathHelper.getPath(AxeronApiConstant.folder.PARENT_LOG)
                         if (!baseDir.exists()) {
                             baseDir.mkdirs()
                         }
@@ -387,9 +412,9 @@ fun FlashScreen(
                             fos.write("$logContent\n".toByteArray())
                             fos.flush()
 
-                            snackBarHost.showSnackbar("Log saved to ${file.absolutePath}")
+                            snackBarHost.showSnackbar(logSaved.format(file.absolutePath))
                         } catch (e: Exception) {
-                            snackBarHost.showSnackbar("Failed to save logs: ${e.message}")
+                            snackBarHost.showSnackbar(logFailed.format(e.message))
                         }
                     }
                 },
@@ -399,7 +424,6 @@ fun FlashScreen(
         floatingActionButton = {
             val reigniteLoading = rememberLoadingDialog()
             if (flashIt is FlashIt.FlashPlugins && (flashing == FlashingStatus.SUCCESS)) {
-                // Reboot button for modules flashing
                 ExtendedFloatingActionButton(
                     onClick = {
                         scope.launch {
@@ -411,19 +435,42 @@ fun FlashScreen(
                         }
                     },
                     icon = { Icon(Icons.Filled.Refresh, contentDescription = null) },
-                    text = { Text(text = "Restart & Close") }
+                    text = { Text(text = stringResource(R.string.re_ignite_and_close)) }
                 )
             }
 
-            if (flashIt is FlashIt.FlashPlugins && (flashing == FlashingStatus.FAILED)) {
+            if (flashIt is FlashIt.FlashUninstall && (flashing == FlashingStatus.SUCCESS)) {
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        scope.launch {
+                            reigniteLoading.withLoading {
+                                Axeron.newProcess(
+                                    AxeronCommandSession.getQuickCmd(
+                                        Starter.internalCommand,
+                                        true,
+                                        false
+                                    ),
+                                    null,
+                                    null
+                                )
+                            }
+                            navigator.popBackStack()
+                            if (finishIntent) activity?.finish()
+                        }
+                    },
+                    icon = { Icon(Icons.Filled.Refresh, contentDescription = null) },
+                    text = { Text(text = stringResource(R.string.restart_and_close)) }
+                )
+            }
+
+            if (flashing == FlashingStatus.FAILED) {
                 // Close button for modules flashing
                 ExtendedFloatingActionButton(
-                    text = { Text(text = "Close") },
+                    text = { Text(text = stringResource(R.string.close)) },
                     icon = { Icon(Icons.Filled.Close, contentDescription = null) },
                     onClick = {
                         navigator.popBackStack()
                         if (finishIntent) activity?.finish()
-
                     }
                 )
             }
@@ -480,10 +527,23 @@ suspend fun flashModulesSequentially(
 }
 
 suspend fun uninstallPermanently(
-    onStdout: (String) -> Unit, onStderr: (String) -> Unit
+    onStdout: (String) -> Unit,
+    onStderr: (String) -> Unit
 ): AxeronPluginService.FlashResult {
     val cmd = """
         . functions.sh; uninstall_axmanager "${AxeronSettings.getEnableDeveloperOptions()}" "${BuildConfig.APPLICATION_ID}"; exit 0
+    """.trimIndent()
+    val result =
+        AxeronPluginService.execWithIO(cmd, onStdout, onStderr, standAlone = true, useSetsid = true)
+    return AxeronPluginService.FlashResult(result)
+}
+
+suspend fun resetManager(
+    onStdout: (String) -> Unit,
+    onStderr: (String) -> Unit
+): AxeronPluginService.FlashResult {
+    val cmd = """
+        . functions.sh; reset_manager "${AxeronSettings.getEnableDeveloperOptions()}"; exit 0
     """.trimIndent()
     val result =
         AxeronPluginService.execWithIO(cmd, onStdout, onStderr, standAlone = true, useSetsid = true)
@@ -500,7 +560,7 @@ suspend fun flashIt(
             flashModulesSequentially(flashIt.installers, onStdout, onStderr)
         }
 
-        is FlashIt.FlashUninstall -> uninstallPermanently(onStdout, onStderr)
+        is FlashIt.FlashUninstall -> resetManager(onStdout, onStderr)
     }
 }
 
@@ -516,11 +576,11 @@ private fun TopBar(
         title = {
             Text(
                 when (status) {
-                    FlashingStatus.FLASHING -> "Flashing"
-                    FlashingStatus.SUCCESS -> "Success"
-                    FlashingStatus.FAILED -> "Failed"
+                    FlashingStatus.FLASHING -> stringResource(R.string.flashing)
+                    FlashingStatus.SUCCESS -> stringResource(R.string.success)
+                    FlashingStatus.FAILED -> stringResource(R.string.failed)
                     else -> {
-                        "Idle"
+                        stringResource(R.string.idle)
                     }
                 },
                 style = MaterialTheme.typography.titleLarge,
