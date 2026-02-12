@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.Adb
+import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Computer
 import androidx.compose.material.icons.outlined.Security
@@ -150,6 +151,7 @@ fun ActivateScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewModelG
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 WirelessDebuggingCard(navigator, activateViewModel)
             }
+            SystemCard(activateViewModel)
             RootCard(navigator, activateViewModel)
             ComputerCard()
         }
@@ -157,6 +159,125 @@ fun ActivateScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewModelG
 }
 
 @Composable
+fun SystemCard(
+    activateViewModel: ActivateViewModel
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    if (!activateViewModel.isSystemExploitSupported(context)) return
+
+    ElevatedCard(
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = 1.dp
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Build,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                Text(
+                    text = stringResource(R.string.activate_by_system),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            Spacer(modifier = Modifier.size(20.dp))
+
+            Text(
+                text = stringResource(R.string.activate_by_system_msg),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.size(20.dp))
+
+            val failed = stringResource(R.string.failed_to_start)
+            val success = stringResource(R.string.activate_success)
+
+            Button(
+                onClick = {
+                    activateViewModel.startSystem(context) { state ->
+                        scope.launch(Dispatchers.Main) {
+                            when (state) {
+                                ActivateViewModel.ACTIVATE_FAILED -> {
+                                    Toast.makeText(context, failed, Toast.LENGTH_SHORT).show()
+                                }
+                                ActivateViewModel.ACTIVATE_SUCCESS -> {
+                                    Toast.makeText(context, success, Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    }
+                }
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.PlayArrow,
+                    modifier = Modifier
+                        .padding(end = 10.dp)
+                        .size(16.dp),
+                    contentDescription = "Start"
+                )
+                Text(stringResource(R.string.start))
+            }
+        }
+    }
+}
+
+@Composable
+fun TcpDebuggingCard(
+    navigator: DestinationsNavigator,
+    activateViewModel: ActivateViewModel
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    ElevatedCard(
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = 1.dp
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Adb,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+
+                Spacer(Modifier.width(10.dp))
+
+                Text(
+                    text = stringResource(R.string.activate_by_tcp),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Spacer(Modifier.size(20.dp))
+
+            Text(
+                text = stringResource(R.string.activate_by_tcp_desc),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.size(8.dp))
 fun TcpDebuggingCard(
     navigator: DestinationsNavigator,
     activateViewModel: ActivateViewModel

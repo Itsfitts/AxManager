@@ -1,0 +1,11 @@
+--- Shizuku-Rikka/manager/src/main/java/moe/shizuku/manager/authorization/RequestPermissionActivity.kt	2026-02-12 18:00:34.814361036 +0000
++++ Shizuku-Pascua28/manager/src/main/java/moe/shizuku/manager/authorization/RequestPermissionActivity.kt	2026-02-12 18:00:34.646361038 +0000
+@@ -41,7 +41,7 @@
+
+     private fun checkSelfPermission(): Boolean {
+         val permission = Shizuku.checkRemotePermission("android.permission.GRANT_RUNTIME_PERMISSIONS") == PackageManager.PERMISSION_GRANTED
+-        if (permission) return true
++        if (permission || Shizuku.getUid() == 1000) return true
+
+         val icon = getDrawable(R.drawable.ic_system_icon)
+         icon?.setTint(theme.resolveColor(android.R.attr.colorAccent))
